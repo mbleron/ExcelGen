@@ -26,6 +26,7 @@ create or replace package ExcelGen is
 =========================================================================================
     Change history :
     Marc Bleron       2020-04-01     Creation
+    Marc Bleron       2020-05-13     Added CellAlignment style
 ====================================================================================== */
 
   type CT_BorderPr is record (
@@ -59,6 +60,12 @@ create or replace package ExcelGen is
   type CT_Fill is record (
     patternFill  CT_PatternFill
   , content      varchar2(32767)
+  );
+  
+  type CT_CellAlignment is record (
+    horizontal  varchar2(16)
+  , vertical    varchar2(16)
+  , content     varchar2(32767)
   );
   
   subtype ctxHandle is pls_integer;
@@ -112,6 +119,12 @@ create or replace package ExcelGen is
   , p_bgColor      in varchar2 default null
   )
   return CT_Fill;
+
+  function makeAlignment (
+    p_horizontal  in varchar2 default null
+  , p_vertical    in varchar2 default null
+  )
+  return CT_CellAlignment;
   
   function makeCellStyle (
     p_ctxId       in ctxHandle
@@ -119,6 +132,7 @@ create or replace package ExcelGen is
   , p_font        in CT_Font default null
   , p_fill        in CT_Fill default null
   , p_border      in CT_Border default null
+  , p_alignment   in CT_CellAlignment default null
   )
   return cellStyleHandle;
 

@@ -73,6 +73,7 @@ See the following sections for more examples and detailed description of ExcelGe
 * [makeBorder](#makeborder-function)  
 * [makeFont](#makefont-function)  
 * [makePatternFill](#makepatternfill-function)  
+* [makeAlignment](#makealignment-function)  
 * [makeCellStyle](#makecellstyle-function)  
 ---
 
@@ -428,6 +429,23 @@ Note :
 For a solid fill (no pattern), the color must be specified using the foreground color parameter.  
 
 ---
+### makeAlignment function
+This function builds an instance of a cell alignment.
+
+```sql
+function makeAlignment (
+  p_horizontal  in varchar2 default null
+, p_vertical    in varchar2 default null
+)
+return CT_CellAlignment;
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_horizontal`|Horizontal alignment type, one of `left`, `center` or `right`.|No
+`p_vertical`|Vertical alignment type, one of `top`, `center` or `bottom`.|No
+
+---
 ### makeCellStyle function
 This function builds an instance of a cell style, composed of optional number format, font, fill and border specifications, and returns a handle to it.
 
@@ -438,6 +456,7 @@ function makeCellStyle (
 , p_font        in CT_Font default null
 , p_fill        in CT_Fill default null
 , p_border      in CT_Border default null
+, p_alignment   in CT_CellAlignment default null
 )
 return cellStyleHandle;
 ```
@@ -449,6 +468,7 @@ Parameter|Description|Mandatory
 `p_font`|Font style instance, as returned by [makeFont](#makefont-function) function.|No
 `p_fill`|Fill style instance, as returned by [makePatternFill](#makepatternfill-function) function.|No
 `p_border`|Border style instance, as returned by [makeBorder](#makeborder-function) function.|No
+`p_alignment`|Cell alignment instance, as returned by [makeAlignment](#makealignment-function) function.|No
 
 Example : 
 
@@ -456,6 +476,7 @@ This sample code creates a cell style composed of the following facets :
 * Font : Calibri, 11 pts, bold face
 * Fill : YellowGreen solid fill
 * Border : Thick red edges
+* Alignment : Horizontally centered
 ```
 declare
 
@@ -466,10 +487,11 @@ begin
   ...
  
   cellStyle := ExcelGen.makeCellStyle(
-                 p_ctxId  => ctxId
-               , p_font   => ExcelGen.makeFont('Calibri',11,true)
-               , p_fill   => ExcelGen.makePatternFill('solid','YellowGreen')
-               , p_border => ExcelGen.makeBorder('thick','red')
+                 p_ctxId     => ctxId
+               , p_font      => ExcelGen.makeFont('Calibri',11,true)
+               , p_fill      => ExcelGen.makePatternFill('solid','YellowGreen')
+               , p_border    => ExcelGen.makeBorder('thick','red')
+               , p_alignment => ExcelGen.makeAlignment(horizontal => 'center')
                );
   ...
 ```

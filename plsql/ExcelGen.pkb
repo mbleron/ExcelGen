@@ -149,12 +149,13 @@ create or replace package body ExcelGen is
   type CT_NumFmts is table of varchar2(32767) index by pls_integer;
   
   type CT_Xf is record (
-    numFmtId  pls_integer := 0
-  , fontId    pls_integer := 0
-  , fillId    pls_integer := 0
-  , borderId  pls_integer := 0
-  , xfId      pls_integer := 0
-  , content   varchar2(32767)
+    numFmtId   pls_integer := 0
+  , fontId     pls_integer := 0
+  , fillId     pls_integer := 0
+  , borderId   pls_integer := 0
+  , xfId       pls_integer := 0
+  , alignment  CT_CellAlignment := null
+  , content    varchar2(32767)
   );
   
   type CT_CellXfMap is table of pls_integer index by varchar2(32767);
@@ -797,12 +798,44 @@ create or replace package body ExcelGen is
     return fillId;
   end;
 
+  procedure setAlignmentContent (
+    alignment  in out nocopy CT_CellAlignment
+  )
+  is
+  begin
+    if coalesce(alignment.horizontal, alignment.vertical) is not null then
+      string_write(alignment.content, '<alignment');
+      if alignment.horizontal is not null then
+        string_write(alignment.content, ' horizontal="'||alignment.horizontal||'"');
+      end if;
+      if alignment.vertical is not null then
+        string_write(alignment.content, ' vertical="'||alignment.vertical||'"');
+      end if;
+      string_write(alignment.content, '/>');
+    end if;    
+  end;
+
+  function makeAlignment (
+    p_horizontal  in varchar2 default null
+  , p_vertical    in varchar2 default null
+  )
+  return CT_CellAlignment
+  is
+    alignment  CT_CellAlignment;
+  begin
+    alignment.horizontal := p_horizontal;
+    alignment.vertical := p_vertical;
+    setAlignmentContent(alignment);
+    return alignment;
+  end;
+
   function putCellXf (
     styles      in out nocopy CT_Stylesheet
   , numFmtCode  in varchar2 default null
   , font        in CT_Font default null
   , fill        in CT_Fill default null
   , border      in CT_Border default null
+  , alignment   in CT_CellAlignment default null
   )
   return pls_integer
   is
@@ -822,6 +855,8 @@ create or replace package body ExcelGen is
       xf.borderId := putBorder(styles, border);
     end if;
     
+    xf.alignment := alignment;
+    
     string_write(xf.content, '<xf');
     string_write(xf.content, ' numFmtId="'||to_char(xf.numFmtId)||'"');
     string_write(xf.content, ' fontId="'||to_char(xf.fontId)||'"');
@@ -840,7 +875,14 @@ create or replace package body ExcelGen is
     if xf.borderId != 0 then
       string_write(xf.content, ' applyBorder="1"');
     end if;
-    string_write(xf.content, '/>');
+    
+    if xf.alignment.content is not null then
+      string_write(xf.content, ' applyAlignment="1">');
+      string_write(xf.content, xf.alignment.content);
+      string_write(xf.content, '</xf>');
+    else
+      string_write(xf.content, '/>');
+    end if;
     
     if styles.cellXfMap.exists(xf.content) then
       xfId := styles.cellXfMap(xf.content);
@@ -858,11 +900,12 @@ create or replace package body ExcelGen is
   , p_font        in CT_Font default null
   , p_fill        in CT_Fill default null
   , p_border      in CT_Border default null
+  , p_alignment   in CT_CellAlignment default null
   )
   return cellStyleHandle
   is
   begin
-    return putCellXf(ctx_cache(p_ctxId).workbook.styles, p_numFmtCode, p_font, p_fill, p_border);        
+    return putCellXf(ctx_cache(p_ctxId).workbook.styles, p_numFmtCode, p_font, p_fill, p_border, p_alignment);        
   end;
   
   /*procedure setCellStyleItems (
