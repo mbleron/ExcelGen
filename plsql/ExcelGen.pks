@@ -27,8 +27,16 @@ create or replace package ExcelGen is
     Change history :
     Marc Bleron       2020-04-01     Creation
     Marc Bleron       2020-05-13     Added CellAlignment style
+    Marc Bleron       2020-06-26     Added encryption
 ====================================================================================== */
 
+  -- compatible versions for encryption
+  OFFICE2007SP1   constant pls_integer := 0;
+  OFFICE2007SP2   constant pls_integer := 1;
+  OFFICE2010      constant pls_integer := 2;
+  OFFICE2013      constant pls_integer := 3;
+  OFFICE2016      constant pls_integer := 4;
+  
   type CT_BorderPr is record (
     style  varchar2(16)
   , color  varchar2(8)
@@ -204,6 +212,12 @@ create or replace package ExcelGen is
   procedure setTimestampFormat (
     p_ctxId   in ctxHandle
   , p_format  in varchar2
+  );
+
+  procedure setEncryption (
+    p_ctxId       in ctxHandle
+  , p_password    in varchar2
+  , p_compatible  in pls_integer default OFFICE2007SP2
   );
   
   function getFileContent (

@@ -253,6 +253,13 @@ create or replace package body ExcelGen is
   
   type sheet_definition_map_t is table of sheet_definition_t index by varchar2(128);
   
+  type encryption_info_t is record (
+    version       varchar2(3)
+  , cipherName    varchar2(16)
+  , hashFuncName  varchar2(16)
+  , password      varchar2(512)
+  );
+  
   type context_t is record (
     string_map           string_map_t
   , string_list          string_list_t := string_list_t()
@@ -262,7 +269,8 @@ create or replace package body ExcelGen is
   , pck                  package_t
   , sheetDefinitionMap   sheet_definition_map_t
   , defaultDateFmt       varchar2(128)
-  , defaultTimestampFmt  varchar2(128)         
+  , defaultTimestampFmt  varchar2(128)
+  , encryptionInfo       encryption_info_t
   );
   
   type context_cache_t is table of context_t index by pls_integer;
@@ -2220,6 +2228,45 @@ create or replace package body ExcelGen is
   begin
     setBindVariableImpl(p_ctxId, p_sheetName, p_bindName, anydata.ConvertDate(p_bindValue));
   end;
+  
+  procedure setEncryption (
+    p_ctxId       in ctxHandle
+  , p_password    in varchar2
+  , p_compatible  in pls_integer default OFFICE2007SP2
+  )
+  is
+    encInfo  encryption_info_t;
+  begin
+    case p_compatible
+    when OFFICE2007SP1 then
+      encInfo.version := '3.2';
+      encInfo.cipherName := 'AES128';
+      encInfo.hashFuncName := 'SHA1';
+    when OFFICE2007SP2 then
+      encInfo.version := '4.2';
+      encInfo.cipherName := 'AES128';
+      encInfo.hashFuncName := 'SHA1';
+    when OFFICE2010 then
+      encInfo.version := '4.4';
+      encInfo.cipherName := 'AES128';
+      encInfo.hashFuncName := 'SHA1';
+    when OFFICE2013 then
+      encInfo.version := '4.4';
+      encInfo.cipherName := 'AES256';
+      encInfo.hashFuncName := 'SHA512';
+    when OFFICE2016 then
+      encInfo.version := '4.4';
+      encInfo.cipherName := 'AES256';
+      encInfo.hashFuncName := 'SHA512';
+    else
+      error('Invalid compatible parameter : %d', p_compatible);
+    end case;
+    
+    encInfo.password := p_password;
+    
+    ctx_cache(p_ctxId).encryptionInfo := encInfo;
+      
+  end;
 
   function getFileContent (
     p_ctxId  in ctxHandle
@@ -2228,6 +2275,7 @@ create or replace package body ExcelGen is
   is
     ctx        context_t := ctx_cache(p_ctxId);
     sheetName  varchar2(128);
+    output     blob;
   begin
     -- worksheets
     sheetName := ctx.sheetDefinitionMap.first;
@@ -2244,7 +2292,20 @@ create or replace package body ExcelGen is
     createPackage(ctx.pck);  
     debug('end create package');
     
-    return ctx.pck.content;
+    if ctx.encryptionInfo.version is not null then
+      output := xutl_offcrypto.encrypt_package(
+                  p_package  => ctx.pck.content
+                , p_password => ctx.encryptionInfo.password
+                , p_version  => ctx.encryptionInfo.version
+                , p_cipher   => ctx.encryptionInfo.cipherName
+                , p_hash     => ctx.encryptionInfo.hashFuncName
+                );
+      dbms_lob.freetemporary(ctx.pck.content);
+    else    
+      output := ctx.pck.content;
+    end if;
+    
+    return output;
     
   end;
   

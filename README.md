@@ -16,6 +16,7 @@ It supports basic formatting options for the header, and table layout.
 
 ## What's New in...
 
+> Version 1.0 : added encryption features
 > Version 0.1b : Beta version.
 
 ## Bug tracker
@@ -27,7 +28,9 @@ Please create an issue [here](https://github.com/mbleron/ExcelGen/issues).
 
 ### Getting source code
 
-Clone this repository or download it as a zip archive.
+Clone this repository or download it as a zip archive.  
+
+Clone or download [MSUtilities](https://github.com/mbleron/MSUtilities).  
 
 ### Database requirement
 
@@ -35,7 +38,9 @@ ExcelGen requires Oracle Database 11\.2\.0\.1 and onwards.
 
 ### PL/SQL
 
-Using SQL*Plus, connect to the target database schema and run script [`install.sql`](./install.sql).
+Using SQL*Plus, connect to the target database schema, then :  
+1. Install [MSUtilities](https://github.com/mbleron/MSUtilities) packages.  
+2. Install ExcelGen using script [`install.sql`](./install.sql).  
 
 ## Quick Start
 
@@ -66,6 +71,7 @@ See the following sections for more examples and detailed description of ExcelGe
 * [setTableFormat](#settableformat-procedure)  
 * [setDateFormat](#setdateformat-procedure)  
 * [setTimestampFormat](#settimestampformat-procedure)  
+* [setEncryption](#setencryption-procedure)  
 * [getFileContent](#getfilecontent-function)  
 * [createFile](#createfile-procedure)  
 * [makeRgbColor](#makergbcolor-function)  
@@ -269,6 +275,25 @@ Parameter|Description|Mandatory
 ---|---|---
 `p_ctxId`|Context handle.|Yes
 `p_format`|Timestamp format string.|Yes
+
+
+---
+### setEncryption procedure
+This procedure sets the password used to encrypt the document, along with the minimum compatible Office version necessary to open it.
+
+```sql
+procedure setEncryption (
+  p_ctxId       in ctxHandle
+, p_password    in varchar2
+, p_compatible  in pls_integer default OFFICE2007SP2
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_password`|Password.|Yes
+`p_compatible`|Minimum compatible Office version for encryption. <br/>One of `OFFICE2007SP1`, `OFFICE2007SP2`, `OFFICE2010`, `OFFICE2013`, `OFFICE2016`. Default is `OFFICE2007SP2`.|No
 
 
 ---
@@ -629,6 +654,9 @@ end;
 
 
 ## CHANGELOG
+
+### 1.0 (2020-06-28)
+* Added encryption
 
 ### 0.1b (2020-03-25)
 * Beta version
