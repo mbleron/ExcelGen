@@ -83,7 +83,6 @@ create or replace package body ExcelGen is
   type range_t is record (expr varchar2(32), start_ref cell_ref_t, end_ref cell_ref_t);
 
   type column_ref_list_t is table of varchar2(3);
-  --type column_ref_map_t is table of pls_integer index by varchar2(3);
   
   type column_t is record (
     name    varchar2(128)
@@ -244,6 +243,7 @@ create or replace package body ExcelGen is
   
   type sheet_definition_t is record (
     sheetName      varchar2(128)
+  , sheetIndex     pls_integer
   , tabColor       varchar2(8)
   , header         sheet_header_t
   , formatAsTable  boolean
@@ -251,7 +251,7 @@ create or replace package body ExcelGen is
   , sqlMetadata    sql_metadata_t
   );
   
-  type sheet_definition_map_t is table of sheet_definition_t index by varchar2(128);
+  type sheet_definition_map_t is table of sheet_definition_t index by pls_integer;
   
   type encryption_info_t is record (
     version       varchar2(3)
@@ -268,6 +268,7 @@ create or replace package body ExcelGen is
   , workbook             CT_Workbook
   , pck                  package_t
   , sheetDefinitionMap   sheet_definition_map_t
+  , sheetIndexMap        CT_SheetMap
   , defaultDateFmt       varchar2(128)
   , defaultTimestampFmt  varchar2(128)
   , encryptionInfo       encryption_info_t
@@ -1328,6 +1329,7 @@ create or replace package body ExcelGen is
     end if;
   end;
 
+  /*
   procedure addSheet (
     ctx      in out nocopy context_t
   , name     in varchar2
@@ -1350,6 +1352,7 @@ create or replace package body ExcelGen is
     ctx.workbook.sheets(i) := sheet;
     addPart(ctx, sheet.partName, MT_WORKSHEET, content);
   end;
+  */
 
   function addTable (
     ctx              in out nocopy context_t
@@ -1764,13 +1767,13 @@ create or replace package body ExcelGen is
   end;
 
   procedure createWorksheet (
-    ctx        in out nocopy context_t
-  , sheetName  in varchar2
+    ctx         in out nocopy context_t
+  , sheetIndex  in pls_integer
   )
   is
     sheetDefinition  sheet_definition_t;
   begin
-    sheetDefinition := ctx.sheetDefinitionMap(sheetName);
+    sheetDefinition := ctx.sheetDefinitionMap(sheetIndex);
     prepareCursor(sheetDefinition.sqlMetadata);
     
     while dbms_sql.is_open(sheetDefinition.sqlMetadata.cursorNumber) loop
@@ -2062,15 +2065,17 @@ create or replace package body ExcelGen is
     ctx_cache.delete(p_ctxId);
   end;
 
-  procedure addSheetImpl (
-    p_ctxId      in ctxHandle
-  , p_sheetName  in varchar2
-  , p_query      in varchar2
-  , p_rc         in sys_refcursor
-  , p_tabColor   in varchar2 default null
-  , p_paginate   in boolean default false
-  , p_pageSize   in pls_integer default null
+  function addSheetImpl (
+    p_ctxId       in ctxHandle
+  , p_sheetName   in varchar2
+  , p_query       in varchar2
+  , p_rc          in sys_refcursor
+  , p_tabColor    in varchar2 default null
+  , p_paginate    in boolean default false
+  , p_pageSize    in pls_integer default null
+  , p_sheetIndex  in pls_integer default null
   )
+  return sheetHandle
   is
     sd        sheet_definition_t;
     local_rc  sys_refcursor := p_rc;
@@ -2090,46 +2095,110 @@ create or replace package body ExcelGen is
       sd.sqlMetadata.cursorNumber := dbms_sql.to_cursor_number(local_rc);
     end if;
     
-    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetName) := sd;
+    if p_sheetIndex is not null then
+      if not ctx_cache(p_ctxId).sheetDefinitionMap.exists(p_sheetIndex) then
+        sd.sheetIndex := p_sheetIndex;
+      else
+        error('Duplicate sheet index: %d', p_sheetIndex);
+      end if;
+    else
+      sd.sheetIndex := nvl(ctx_cache(p_ctxId).sheetDefinitionMap.last, 0) + 1;
+    end if;
+    
+    ctx_cache(p_ctxId).sheetDefinitionMap(sd.sheetIndex) := sd;
+    ctx_cache(p_ctxId).sheetIndexMap(sd.sheetName) := sd.sheetIndex;
+    
+    return sd.sheetIndex;
   end;
   
   procedure addSheetFromQuery (
-    p_ctxId      in ctxHandle
-  , p_sheetName  in varchar2
-  , p_query      in varchar2
-  , p_tabColor   in varchar2 default null
-  , p_paginate   in boolean default false
-  , p_pageSize   in pls_integer default null
+    p_ctxId       in ctxHandle
+  , p_sheetName   in varchar2
+  , p_query       in varchar2
+  , p_tabColor    in varchar2 default null
+  , p_paginate    in boolean default false
+  , p_pageSize    in pls_integer default null
+  , p_sheetIndex  in pls_integer default null
   )
   is
+    sheetId  sheetHandle;
+  begin
+    sheetId := addSheetFromQuery(p_ctxId, p_sheetName, p_query, p_tabColor, p_paginate, p_pageSize, p_sheetIndex);
+  end;
+
+  function addSheetFromQuery (
+    p_ctxId       in ctxHandle
+  , p_sheetName   in varchar2
+  , p_query       in varchar2
+  , p_tabColor    in varchar2 default null
+  , p_paginate    in boolean default false
+  , p_pageSize    in pls_integer default null
+  , p_sheetIndex  in pls_integer default null
+  )
+  return sheetHandle
+  is
+    sheetId  sheetHandle;
   begin
     if p_query is null then
       error('Query string argument cannot be null');
     else
-      addSheetImpl(p_ctxId, p_sheetName, p_query, null, p_tabColor, p_paginate, p_pageSize);
+      sheetId := addSheetImpl(p_ctxId, p_sheetName, p_query, null, p_tabColor, p_paginate, p_pageSize, p_sheetIndex);
     end if;
+    return sheetId;
   end;
 
   procedure addSheetFromCursor (
-    p_ctxId      in ctxHandle
-  , p_sheetName  in varchar2
-  , p_rc         in sys_refcursor
-  , p_tabColor   in varchar2 default null
-  , p_paginate   in boolean default false
-  , p_pageSize   in pls_integer default null
+    p_ctxId       in ctxHandle
+  , p_sheetName   in varchar2
+  , p_rc          in sys_refcursor
+  , p_tabColor    in varchar2 default null
+  , p_paginate    in boolean default false
+  , p_pageSize    in pls_integer default null
+  , p_sheetIndex  in pls_integer default null
   )
   is
+    sheetId  sheetHandle;
+  begin
+    sheetId := addSheetFromCursor(p_ctxId, p_sheetName, p_rc, p_tabColor, p_paginate, p_pageSize, p_sheetIndex);
+  end;
+
+  function addSheetFromCursor (
+    p_ctxId       in ctxHandle
+  , p_sheetName   in varchar2
+  , p_rc          in sys_refcursor
+  , p_tabColor    in varchar2 default null
+  , p_paginate    in boolean default false
+  , p_pageSize    in pls_integer default null
+  , p_sheetIndex  in pls_integer default null
+  )
+  return sheetHandle
+  is
+    sheetId  sheetHandle;
   begin
     if p_rc is null then
       error('Ref cursor argument cannot be null');
     else
-      addSheetImpl(p_ctxId, p_sheetName, null, p_rc, p_tabColor, p_paginate, p_pageSize);
+      sheetId := addSheetImpl(p_ctxId, p_sheetName, null, p_rc, p_tabColor, p_paginate, p_pageSize, p_sheetIndex);
     end if;
+    return sheetId;
+  end;
+
+  -- to be deprecated
+  procedure setHeader (
+    p_ctxId       in ctxHandle
+  , p_sheetName   in varchar2
+  , p_style       in cellStyleHandle default null
+  , p_frozen      in boolean default false
+  , p_autoFilter  in boolean default false
+  )
+  is
+  begin
+    setHeader(p_ctxId, ctx_cache(p_ctxId).sheetIndexMap(p_sheetName), p_style, p_frozen, p_autofilter);
   end;
 
   procedure setHeader (
     p_ctxId       in ctxHandle
-  , p_sheetName   in varchar2
+  , p_sheetId     in sheetHandle
   , p_style       in cellStyleHandle default null
   , p_frozen      in boolean default false
   , p_autoFilter  in boolean default false
@@ -2141,18 +2210,29 @@ create or replace package body ExcelGen is
     sheetHeader.xfId := p_style;
     sheetHeader.isFrozen := p_frozen;
     sheetHeader.autoFilter := p_autoFilter;
-    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetName).header := sheetHeader;
+    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).header := sheetHeader;
   end;
 
+  -- to be deprecated
   procedure setTableFormat (
-    p_ctxId       in ctxHandle
-  , p_sheetName   in varchar2
-  , p_style       in varchar2 default null
+    p_ctxId      in ctxHandle
+  , p_sheetName  in varchar2
+  , p_style      in varchar2 default null
   )
   is
   begin
-    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetName).formatAsTable := true;
-    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetName).tableStyle := p_style;
+    setTableFormat(p_ctxId, ctx_cache(p_ctxId).sheetIndexMap(p_sheetName), p_style);
+  end;
+
+  procedure setTableFormat (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle
+  , p_style    in varchar2 default null
+  )
+  is
+  begin
+    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).formatAsTable := true;
+    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).tableStyle := p_style;
   end;
 
   procedure setDateFormat (
@@ -2174,10 +2254,10 @@ create or replace package body ExcelGen is
   end;
 
   procedure setBindVariableImpl (
-    p_ctxId      in ctxHandle
-  , p_sheetName  in varchar2
-  , p_bindName   in varchar2
-  , p_bindValue  in anydata
+    p_ctxId       in ctxHandle
+  , p_sheetIndex  in pls_integer
+  , p_bindName    in varchar2
+  , p_bindValue   in anydata
   )
   is
     sheetDefinition  sheet_definition_t;
@@ -2186,16 +2266,17 @@ create or replace package body ExcelGen is
   begin
     bindVar.name := p_bindName;
     bindVar.value := p_bindValue;
-    sheetDefinition := ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetName);
+    sheetDefinition := ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetIndex);
     
     sheetDefinition.sqlMetadata.bindVariables.extend;
     collIdx := sheetDefinition.sqlMetadata.bindVariables.last;
     sheetDefinition.sqlMetadata.bindVariables(collIdx) := bindVar;
     
-    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetName) := sheetDefinition;
+    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetIndex) := sheetDefinition;
     
   end;
 
+  -- to be deprecated
   procedure setBindVariable (
     p_ctxId      in ctxHandle
   , p_sheetName  in varchar2
@@ -2204,9 +2285,21 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    setBindVariableImpl(p_ctxId, p_sheetName, p_bindName, anydata.ConvertNumber(p_bindValue));
+    setBindVariableImpl(p_ctxId, ctx_cache(p_ctxId).sheetIndexMap(p_sheetName), p_bindName, anydata.ConvertNumber(p_bindValue));
   end;
 
+  procedure setBindVariable (
+    p_ctxId      in ctxHandle
+  , p_sheetId    in sheetHandle
+  , p_bindName   in varchar2
+  , p_bindValue  in number
+  )
+  is
+  begin
+    setBindVariableImpl(p_ctxId, p_sheetId, p_bindName, anydata.ConvertNumber(p_bindValue));
+  end;
+  
+  -- to be deprecated
   procedure setBindVariable (
     p_ctxId      in ctxHandle
   , p_sheetName  in varchar2
@@ -2215,9 +2308,21 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    setBindVariableImpl(p_ctxId, p_sheetName, p_bindName, anydata.ConvertVarchar2(p_bindValue));
+    setBindVariableImpl(p_ctxId, ctx_cache(p_ctxId).sheetIndexMap(p_sheetName), p_bindName, anydata.ConvertVarchar2(p_bindValue));
+  end;
+  
+  procedure setBindVariable (
+    p_ctxId      in ctxHandle
+  , p_sheetId    in sheetHandle
+  , p_bindName   in varchar2
+  , p_bindValue  in varchar2
+  )
+  is
+  begin
+    setBindVariableImpl(p_ctxId, p_sheetId, p_bindName, anydata.ConvertVarchar2(p_bindValue));
   end;
 
+  -- to be deprecated
   procedure setBindVariable (
     p_ctxId      in ctxHandle
   , p_sheetName  in varchar2
@@ -2226,7 +2331,18 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    setBindVariableImpl(p_ctxId, p_sheetName, p_bindName, anydata.ConvertDate(p_bindValue));
+    setBindVariableImpl(p_ctxId, ctx_cache(p_ctxId).sheetIndexMap(p_sheetName), p_bindName, anydata.ConvertDate(p_bindValue));
+  end;
+
+  procedure setBindVariable (
+    p_ctxId      in ctxHandle
+  , p_sheetId    in sheetHandle
+  , p_bindName   in varchar2
+  , p_bindValue  in date
+  )
+  is
+  begin
+    setBindVariableImpl(p_ctxId, p_sheetId, p_bindName, anydata.ConvertDate(p_bindValue));
   end;
   
   procedure setEncryption (
@@ -2273,15 +2389,15 @@ create or replace package body ExcelGen is
   )
   return blob
   is
-    ctx        context_t := ctx_cache(p_ctxId);
-    sheetName  varchar2(128);
-    output     blob;
+    ctx         context_t := ctx_cache(p_ctxId);
+    sheetIndex  pls_integer;
+    output      blob;
   begin
     -- worksheets
-    sheetName := ctx.sheetDefinitionMap.first;
-    while sheetName is not null loop
-      createWorksheet(ctx, sheetname);
-      sheetName := ctx.sheetDefinitionMap.next(sheetName);
+    sheetIndex := ctx.sheetDefinitionMap.first;
+    while sheetIndex is not null loop
+      createWorksheet(ctx, sheetIndex);
+      sheetIndex := ctx.sheetDefinitionMap.next(sheetIndex);
     end loop;
     
     createWorkbook(ctx);

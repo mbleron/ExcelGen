@@ -3,7 +3,7 @@ create or replace package ExcelGen is
 
   MIT License
 
-  Copyright (c) 2020 Marc Bleron
+  Copyright (c) 2020-2021 Marc Bleron
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -28,6 +28,9 @@ create or replace package ExcelGen is
     Marc Bleron       2020-04-01     Creation
     Marc Bleron       2020-05-13     Added CellAlignment style
     Marc Bleron       2020-06-26     Added encryption
+    Marc Bleron       2021-04-29     Fixed wrong sheet order in resulting workbook
+    Marc Bleron       2021-04-29     Added optional parameter p_sheetIndex in 
+                                     addSheetFromXXX routines
 ====================================================================================== */
 
   -- compatible versions for encryption
@@ -77,6 +80,7 @@ create or replace package ExcelGen is
   );
   
   subtype ctxHandle is pls_integer;
+  subtype sheetHandle is pls_integer;
   subtype cellStyleHandle is pls_integer;
   
   subtype uint8 is pls_integer range 0..255;
@@ -152,23 +156,48 @@ create or replace package ExcelGen is
   );
 
   procedure addSheetFromQuery (
-    p_ctxId      in ctxHandle
-  , p_sheetName  in varchar2
-  , p_query      in varchar2
-  , p_tabColor   in varchar2 default null
-  , p_paginate   in boolean default false
-  , p_pageSize   in pls_integer default null
+    p_ctxId       in ctxHandle
+  , p_sheetName   in varchar2
+  , p_query       in varchar2
+  , p_tabColor    in varchar2 default null
+  , p_paginate    in boolean default false
+  , p_pageSize    in pls_integer default null
+  , p_sheetIndex  in pls_integer default null
   );
+  
+  function addSheetFromQuery (
+    p_ctxId       in ctxHandle
+  , p_sheetName   in varchar2
+  , p_query       in varchar2
+  , p_tabColor    in varchar2 default null
+  , p_paginate    in boolean default false
+  , p_pageSize    in pls_integer default null
+  , p_sheetIndex  in pls_integer default null
+  )
+  return sheetHandle;
 
   procedure addSheetFromCursor (
-    p_ctxId      in ctxHandle
-  , p_sheetName  in varchar2
-  , p_rc         in sys_refcursor
-  , p_tabColor   in varchar2 default null
-  , p_paginate   in boolean default false
-  , p_pageSize   in pls_integer default null
+    p_ctxId       in ctxHandle
+  , p_sheetName   in varchar2
+  , p_rc          in sys_refcursor
+  , p_tabColor    in varchar2 default null
+  , p_paginate    in boolean default false
+  , p_pageSize    in pls_integer default null
+  , p_sheetIndex  in pls_integer default null
   );
 
+  function addSheetFromCursor (
+    p_ctxId       in ctxHandle
+  , p_sheetName   in varchar2
+  , p_rc          in sys_refcursor
+  , p_tabColor    in varchar2 default null
+  , p_paginate    in boolean default false
+  , p_pageSize    in pls_integer default null
+  , p_sheetIndex  in pls_integer default null
+  )
+  return sheetHandle;
+
+  -- to be deprecated
   procedure setBindVariable (
     p_ctxId      in ctxHandle
   , p_sheetName  in varchar2
@@ -176,6 +205,7 @@ create or replace package ExcelGen is
   , p_bindValue  in number
   );
 
+  -- to be deprecated
   procedure setBindVariable (
     p_ctxId      in ctxHandle
   , p_sheetName  in varchar2
@@ -183,13 +213,36 @@ create or replace package ExcelGen is
   , p_bindValue  in varchar2
   );
 
+  -- to be deprecated
   procedure setBindVariable (
     p_ctxId      in ctxHandle
   , p_sheetName  in varchar2
   , p_bindName   in varchar2
   , p_bindValue  in date
   );
+  
+  procedure setBindVariable (
+    p_ctxId      in ctxHandle
+  , p_sheetId    in sheetHandle
+  , p_bindName   in varchar2
+  , p_bindValue  in number
+  );
 
+  procedure setBindVariable (
+    p_ctxId      in ctxHandle
+  , p_sheetId    in sheetHandle
+  , p_bindName   in varchar2
+  , p_bindValue  in varchar2
+  );
+
+  procedure setBindVariable (
+    p_ctxId      in ctxHandle
+  , p_sheetId    in sheetHandle
+  , p_bindName   in varchar2
+  , p_bindValue  in date
+  );
+
+  -- to be deprecated
   procedure setHeader (
     p_ctxId       in ctxHandle
   , p_sheetName   in varchar2
@@ -198,10 +251,25 @@ create or replace package ExcelGen is
   , p_autoFilter  in boolean default false
   );
 
+  procedure setHeader (
+    p_ctxId       in ctxHandle
+  , p_sheetId     in sheetHandle
+  , p_style       in cellStyleHandle default null
+  , p_frozen      in boolean default false
+  , p_autoFilter  in boolean default false
+  );
+
+  -- to be deprecated
   procedure setTableFormat (
     p_ctxId      in ctxHandle
   , p_sheetName  in varchar2
   , p_style      in varchar2 default null
+  );
+
+  procedure setTableFormat (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle
+  , p_style    in varchar2 default null
   );
 
   procedure setDateFormat (

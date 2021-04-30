@@ -16,8 +16,8 @@ It supports basic formatting options for the header, and table layout.
 
 ## What's New in...
 
-> Version 1.0 : added encryption features
-> Version 0.1b : Beta version.
+> Version 1.0 : added encryption features  
+> Version 0.1b : Beta version
 
 ## Bug tracker
 
@@ -64,8 +64,8 @@ See the following sections for more examples and detailed description of ExcelGe
 
 * [createContext](#createcontext-function)  
 * [closeContext](#closecontext-procedure)  
-* [addSheetFromQuery](#addsheetfromquery-procedure)  
-* [addSheetFromCursor](#addsheetfromcursor-procedure)  
+* [addSheetFromQuery](#addsheetfromquery-procedure-and-function)  
+* [addSheetFromCursor](#addsheetfromcursor-procedure-and-function)  
 * [setBindVariable](#setbindvariable-procedure)  
 * [setHeader](#setheader-procedure)  
 * [setTableFormat](#settableformat-procedure)  
@@ -106,18 +106,33 @@ Parameter|Description|Mandatory
 `p_ctxId`|Context handle.|Yes
 
 ---
-### addSheetFromQuery procedure
-Adds a new sheet based on a SQL query string, with optional pagination.
+### addSheetFromQuery procedure and function
+Adds a new sheet based on a SQL query string, with optional pagination.  
+Available both as a procedure and a function.  
+The function returns a sheetHandle value to be used with related subprograms [setHeader](#setheader-procedure), [setBindVariable](#setbindvariable-procedure) and [setTableFormat](#settableformat-procedure).  
 
 ```sql
 procedure addSheetFromQuery (
-  p_ctxId      in ctxHandle
-, p_sheetName  in varchar2
-, p_query      in varchar2
-, p_tabColor   in varchar2 default null
-, p_paginate   in boolean default false
-, p_pageSize   in pls_integer default null
+  p_ctxId       in ctxHandle
+, p_sheetName   in varchar2
+, p_query       in varchar2
+, p_tabColor    in varchar2 default null
+, p_paginate    in boolean default false
+, p_pageSize    in pls_integer default null
+, p_sheetIndex  in pls_integer default null
 );
+```
+```sql
+function addSheetFromQuery (
+  p_ctxId       in ctxHandle
+, p_sheetName   in varchar2
+, p_query       in varchar2
+, p_tabColor    in varchar2 default null
+, p_paginate    in boolean default false
+, p_pageSize    in pls_integer default null
+, p_sheetIndex  in pls_integer default null
+)
+return sheetHandle;
 ```
 
 Parameter|Description|Mandatory
@@ -128,6 +143,7 @@ Parameter|Description|Mandatory
 `p_tabColor`|Tab [color](#color-specification) of the new sheet.|No
 `p_paginate`|Enables pagination of the input data source over multiple sheets. <br/>Use `p_pageSize` parameter to control the maximum number of rows per sheet.|No
 `p_pageSize`|Maximum number of rows per sheet, when pagination is enabled. <br/>If set to NULL, Excel sheet limit is used (1,048,576 rows).|No
+`p_sheetIndex`|Sheet tab index in the workbook. <br/>If omitted, the sheet is added at the end of the list, after the last existing index.|No
 
 **Notes :**  
 When pagination is used, three substitution variables may be used to generate unique names from the input sheet name pattern : 
@@ -139,33 +155,52 @@ For example :
 `sheet${PNUM}` will be expanded to `sheet1`, `sheet2`, `sheet3`, etc.  
 `${PSTART}-${PSTOP}` will be expanded to `1-1000`, `1001-2000`, `2001-3000`, etc. assuming a page size of 1000 rows.  
 
+The list of sheet indices specified via `p_sheetIndex` may be sparse.  
+For example, if one adds sheet 'A' at index 2, sheet 'B' at index 4 and sheet 'C' at index 1, the resulting workbook will show sheets 'C', 'A' and 'B' in that order.
+
 ---
-### addSheetFromCursor procedure
-Adds a new sheet based on a weakly-typed ref cursor, with optional pagination.
+### addSheetFromCursor procedure and function
+Adds a new sheet based on a weakly-typed ref cursor, with optional pagination.  
+Available both as a procedure and a function.  
+The function returns a sheetHandle value to be used with related subprograms [setHeader](#setheader-procedure), [setBindVariable](#setbindvariable-procedure) and [setTableFormat](#settableformat-procedure).  
 
 ```sql
-procedure addSheetFromQuery (
-  p_ctxId      in ctxHandle
-, p_sheetName  in varchar2
-, p_rc         in sys_refcursor
-, p_tabColor   in varchar2 default null
-, p_paginate   in boolean default false
-, p_pageSize   in pls_integer default null
+procedure addSheetFromCursor (
+  p_ctxId       in ctxHandle
+, p_sheetName   in varchar2
+, p_rc          in sys_refcursor
+, p_tabColor    in varchar2 default null
+, p_paginate    in boolean default false
+, p_pageSize    in pls_integer default null
+, p_sheetIndex  in pls_integer default null
 );
+```
+```sql
+function addSheetFromCursor (
+  p_ctxId       in ctxHandle
+, p_sheetName   in varchar2
+, p_rc          in sys_refcursor
+, p_tabColor    in varchar2 default null
+, p_paginate    in boolean default false
+, p_pageSize    in pls_integer default null
+, p_sheetIndex  in pls_integer default null
+)
+return sheetHandle;
 ```
 
 Parameter|Description|Mandatory
 ---|---|---
-`p_ctxId`|Cf. [addSheetFromQuery](#addsheetfromquery-procedure).|Yes
-`p_sheetName`|Cf. [addSheetFromQuery](#addsheetfromquery-procedure).|Yes
+`p_ctxId`|Cf. [addSheetFromQuery](#addsheetfromquery-procedure-and-function).|Yes
+`p_sheetName`|Cf. [addSheetFromQuery](#addsheetfromquery-procedure-and-function).|Yes
 `p_rc`|Input ref cursor.|Yes
-`p_tabColor`|Cf. [addSheetFromQuery](#addsheetfromquery-procedure).|No
-`p_paginate`|Cf. [addSheetFromQuery](#addsheetfromquery-procedure).|No
-`p_pageSize`|Cf. [addSheetFromQuery](#addsheetfromquery-procedure).|No
+`p_tabColor`|Cf. [addSheetFromQuery](#addsheetfromquery-procedure-and-function).|No
+`p_paginate`|Cf. [addSheetFromQuery](#addsheetfromquery-procedure-and-function).|No
+`p_pageSize`|Cf. [addSheetFromQuery](#addsheetfromquery-procedure-and-function).|No
+`p_sheetIndex`|Cf. [addSheetFromQuery](#addsheetfromquery-procedure-and-function).|No
 
 ---
 ### setBindVariable procedure
-This procedure binds a value to a variable in the SQL query associated with a given sheet.  
+This procedure binds a value to a variable in the SQL query associated with a given sheet, specified by either a sheet name or a sheet handle as returned from `addSheetFromXXX` functions.  
 It is overloaded to accept a NUMBER, VARCHAR2 or DATE value.  
 
 ```sql
@@ -193,10 +228,36 @@ procedure setBindVariable (
 );
 ```
 
+```sql
+procedure setBindVariable (
+  p_ctxId       in ctxHandle
+, p_sheetId     in sheetHandle
+, p_bindName    in varchar2
+, p_bindValue   in number
+);
+```
+```sql
+procedure setBindVariable (
+  p_ctxId      in ctxHandle
+, p_sheetId    in sheetHandle
+, p_bindName   in varchar2
+, p_bindValue  in varchar2
+);
+```
+```sql
+procedure setBindVariable (
+  p_ctxId      in ctxHandle
+, p_sheetId    in sheetHandle
+, p_bindName   in varchar2
+, p_bindValue  in date
+);
+```
+
 Parameter|Description|Mandatory
 ---|---|---
 `p_ctxId`|Context handle.|Yes
 `p_sheetName`|Sheet name.|Yes
+`p_sheetId`|Sheet handle.|Yes
 `p_bindName`|Bind variable name.|Yes
 `p_bindValue`|Bind variable value.|Yes
 
@@ -215,10 +276,21 @@ procedure setHeader (
 );
 ```
 
+```sql
+procedure setHeader (
+  p_ctxId       in ctxHandle
+, p_sheetId     in sheetHandle
+, p_style       in cellStyleHandle default null
+, p_frozen      in boolean default false
+, p_autoFilter  in boolean default false
+);
+```
+
 Parameter|Description|Mandatory
 ---|---|---
 `p_ctxId`|Context handle.|Yes
 `p_sheetName`|Sheet name.|Yes
+`p_sheetId`|Sheet handle.|Yes
 `p_style`|Handle to a cell style created via [makeCellStyle](#makecellstyle-function) function.|No
 `p_frozen`|Set this parameter to true in order to freeze the header row.|No
 `p_autoFilter`|Set this parameter to true in order to add an automatic filter to this sheet.|No
@@ -235,10 +307,19 @@ procedure setTableFormat (
 );
 ```
 
+```sql
+procedure setTableFormat (
+  p_ctxId      in ctxHandle
+, p_sheetId    in sheetHandle
+, p_style      in varchar2 default null
+);
+```
+
 Parameter|Description|Mandatory
 ---|---|---
 `p_ctxId`|Context handle.|Yes
 `p_sheetName`|Sheet name.|Yes
+`p_sheetId`|Sheet handle.|Yes
 `p_styleName`|Name of a predefined Excel table style to apply. <br/>See [Predefined table styles](#predefined-table-styles) for a list of available styles.|No
 
 ---
@@ -652,8 +733,45 @@ end;
 /
 ```  
 
+* Yet another example : [sample4.xlsx](./samples/sample4.xlsx)
+
+```
+declare
+  ctxId    ExcelGen.ctxHandle;
+  sheet1   ExcelGen.sheetHandle;
+  sheet2   ExcelGen.sheetHandle;
+  sheet3   ExcelGen.sheetHandle;
+begin
+  
+  ctxId := ExcelGen.createContext();
+  
+  -- adding a new sheet in position 3
+  sheet1 := ExcelGen.addSheetFromQuery(ctxId, 'c', 'select * from hr.employees where department_id = :1', p_sheetIndex => 3);
+  ExcelGen.setBindVariable(ctxId, sheet1, '1', 30);
+  ExcelGen.setTableFormat(ctxId, sheet1, 'TableStyleLight1');
+  ExcelGen.setHeader(ctxId, sheet1, p_autoFilter => true, p_frozen => true);
+  
+  -- adding a new sheet in last position (4)
+  sheet2 := ExcelGen.addSheetFromQuery(ctxId, 'b', 'select * from hr.employees');
+  ExcelGen.setTableFormat(ctxId, sheet2, 'TableStyleLight2');
+  ExcelGen.setHeader(ctxId, sheet2, p_autoFilter => true, p_frozen => true);
+  
+  -- adding a new sheet in position 1, with a 10-row pagination
+  sheet3 := ExcelGen.addSheetFromQuery(ctxId, 'a${PNUM}', 'select * from hr.employees', p_paginate => true, p_pageSize => 10, p_sheetIndex => 1);
+  ExcelGen.setHeader(ctxId, sheet3, p_autoFilter => true, p_frozen => true);
+
+  ExcelGen.createFile(ctxId, 'TEST_DIR', 'sample4.xlsx');
+  ExcelGen.closeContext(ctxId);
+  
+end;
+/
+```  
+
 
 ## CHANGELOG
+
+### 1.1 (2021-04-30)
+* Fix : issue #1
 
 ### 1.0 (2020-06-28)
 * Added encryption
@@ -664,4 +782,4 @@ end;
 
 ## Copyright and license
 
-Copyright 2020 Marc Bleron. Released under MIT license.
+Copyright 2020-2021 Marc Bleron. Released under MIT license.
