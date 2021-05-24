@@ -31,7 +31,12 @@ create or replace package ExcelGen is
     Marc Bleron       2021-04-29     Fixed wrong sheet order in resulting workbook
     Marc Bleron       2021-04-29     Added optional parameter p_sheetIndex in 
                                      addSheetFromXXX routines
+    Marc Bleron       2021-05-13     Added XLSB support
 ====================================================================================== */
+
+  -- file types
+  FILE_XLSX       constant pls_integer := 0;
+  FILE_XLSB       constant pls_integer := 1;
 
   -- compatible versions for encryption
   OFFICE2007SP1   constant pls_integer := 0;
@@ -40,6 +45,7 @@ create or replace package ExcelGen is
   OFFICE2013      constant pls_integer := 3;
   OFFICE2016      constant pls_integer := 4;
   
+  /*
   type CT_BorderPr is record (
     style  varchar2(16)
   , color  varchar2(8)
@@ -78,6 +84,13 @@ create or replace package ExcelGen is
   , vertical    varchar2(16)
   , content     varchar2(32767)
   );
+  */
+  subtype CT_BorderPr is ExcelTypes.CT_BorderPr;
+  subtype CT_Border is ExcelTypes.CT_Border;
+  subtype CT_Font is ExcelTypes.CT_Font;
+  subtype CT_PatternFill is ExcelTypes.CT_PatternFill;
+  subtype CT_Fill is ExcelTypes.CT_Fill;
+  subtype CT_CellAlignment is ExcelTypes.CT_CellAlignment;
   
   subtype ctxHandle is pls_integer;
   subtype sheetHandle is pls_integer;
@@ -148,7 +161,9 @@ create or replace package ExcelGen is
   )
   return cellStyleHandle;
 
-  function createContext
+  function createContext (
+    p_type  in pls_integer default FILE_XLSX 
+  )
   return ctxHandle;
 
   procedure closeContext (

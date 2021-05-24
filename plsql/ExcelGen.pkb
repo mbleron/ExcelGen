@@ -29,6 +29,12 @@ create or replace package body ExcelGen is
   MT_TABLE           constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml';
   --MT_COMMENTS        constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml';
   
+  -- Binary MIME types
+  MT_STYLES_BIN         constant varchar2(256) := 'application/vnd.ms-excel.styles';
+  MT_WORKSHEET_BIN      constant varchar2(256) := 'application/vnd.ms-excel.worksheet';
+  MT_SHAREDSTRINGS_BIN  constant varchar2(256) := 'application/vnd.ms-excel.sharedStrings';
+  MT_TABLE_BIN          constant varchar2(256) := 'application/vnd.ms-excel.table';
+  
   -- Relationship types
   RS_OFFICEDOCUMENT  constant varchar2(256) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument';
   RS_WORKSHEET       constant varchar2(256) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet';
@@ -109,7 +115,9 @@ create or replace package body ExcelGen is
     name         varchar2(256)
   , contentType  varchar2(256)
   , content      clob
+  , contentBin   blob
   , rels         CT_Relationships
+  , isBinary     boolean := false
   );
   
   type part_list_t is table of part_t;
@@ -183,7 +191,7 @@ create or replace package body ExcelGen is
   type CT_Table is record (
     id          pls_integer
   , name        varchar2(256)
-  , ref         varchar2(32)
+  , ref         range_t
   , cols        CT_TableColumns
   , showHeader  boolean
   , autoFilter  boolean
@@ -201,6 +209,7 @@ create or replace package body ExcelGen is
   , rId          varchar2(256)
   , partName     varchar2(256)
   , filterRange  range_t
+  , filterXti    pls_integer
   , tableParts   CT_TableParts
   );
   
@@ -272,6 +281,7 @@ create or replace package body ExcelGen is
   , defaultDateFmt       varchar2(128)
   , defaultTimestampFmt  varchar2(128)
   , encryptionInfo       encryption_info_t
+  , fileType             pls_integer
   );
   
   type context_cache_t is table of context_t index by pls_integer;
@@ -364,6 +374,13 @@ create or replace package body ExcelGen is
       end loop;
     end if;
     return l_result;
+  end;
+
+  function int2raw (int32 in binary_integer, sz in pls_integer default null) return raw
+  is
+    r raw(4) := utl_raw.cast_from_binary_integer(int32, utl_raw.little_endian);
+  begin
+    return case when sz is not null then utl_raw.substr(r, 1, sz) else r end;
   end;
   
   function makeCellRef (
@@ -916,18 +933,6 @@ create or replace package body ExcelGen is
   begin
     return putCellXf(ctx_cache(p_ctxId).workbook.styles, p_numFmtCode, p_font, p_fill, p_border, p_alignment);        
   end;
-  
-  /*procedure setCellStyleItems (
-    xfId        in cellStyleHandle
-  , numFmtCode  in varchar2 default null
-  , font        in CT_Font default null
-  , fill        in CT_Fill default null
-  , border      in CT_Border default null    
-  )
-  is
-  begin
-    null;
-  end;*/
 
   function newStylesheet
   return CT_Stylesheet
@@ -1282,6 +1287,25 @@ create or replace package body ExcelGen is
     ctx.pck.partIndices(name) := idx;
   end;
 
+  procedure addPart (
+    ctx          in out nocopy context_t
+  , name         in varchar2
+  , contentType  in varchar2
+  , contentBin   in blob
+  )
+  is
+    idx  pls_integer;
+  begin
+    ctx.pck.parts.extend;
+    idx := ctx.pck.parts.last;
+    ctx.pck.parts(idx).name := name;
+    ctx.pck.parts(idx).contentType := contentType;
+    ctx.pck.parts(idx).contentBin := contentBin;
+    ctx.pck.parts(idx).isBinary := true;
+    ctx.pck.parts(idx).rels := CT_Relationships();
+    ctx.pck.partIndices(name) := idx;
+  end;
+
   function addRelationship (
     part    in out nocopy part_t
   , type    in varchar2
@@ -1356,7 +1380,7 @@ create or replace package body ExcelGen is
 
   function addTable (
     ctx              in out nocopy context_t
-  , tableRef         in varchar2
+  , tableRange       in range_t
   , showHeader       in boolean
   , tableAutoFilter  in boolean
   , tableStyleName   in varchar2
@@ -1369,11 +1393,12 @@ create or replace package body ExcelGen is
   begin
     tab.id := nvl(ctx.workbook.tables.last, 0) + 1;
     tab.name := nvl(tableName, 'Table'||to_char(tab.id));
-    tab.ref := tableRef;
+    tab.ref := tableRange;
     tab.showHeader := showHeader;
     tab.autoFilter := tableAutoFilter;
     tab.styleName := tableStyleName;
-    tab.partName := 'xl/tables/table'||to_char(tab.id)||'.xml';
+    tab.partName := 'xl/tables/table'||to_char(tab.id)
+                                     ||case when ctx.fileType = FILE_XLSB then '.bin' else '.xml' end;
     tab.cols := CT_TableColumns();
     tab.cols.extend(columnList.count);
     for i in 1 .. columnList.count loop
@@ -1506,6 +1531,97 @@ create or replace package body ExcelGen is
     
   end;
 
+  procedure createStylesheetBin (
+    ctx       in out nocopy context_t
+  , styles    in CT_Stylesheet
+  , partName  in varchar2
+  )
+  is
+    stream  xutl_xlsb.Stream_T := xutl_xlsb.new_stream();
+  begin
+    
+    xutl_xlsb.put_simple_record(stream, 278); -- BrtBeginStyleSheet
+    
+    -- numFmts
+    if styles.numFmts.count != 0 then
+      xutl_xlsb.put_simple_record(stream, 615, int2raw(styles.numFmts.count)); -- BrtBeginFmts
+      for numFmtId in styles.numFmts.first .. styles.numFmts.last loop
+        -- BrtFmt
+        xutl_xlsb.put_NumFmt(stream, numFmtId, styles.numFmts(numFmtId));
+      end loop;
+      xutl_xlsb.put_simple_record(stream, 616); -- BrtEndFmts
+    end if;
+    
+    -- fonts
+    if styles.fonts.count != 0 then
+      xutl_xlsb.put_simple_record(stream, 611, int2raw(styles.fonts.count)); -- BrtBeginFonts
+      for fontId in styles.fonts.first .. styles.fonts.last loop
+        -- BrtFont
+        xutl_xlsb.put_Font(stream, styles.fonts(fontId));
+      end loop;
+      xutl_xlsb.put_simple_record(stream, 612); -- BrtEndFonts
+    end if;
+    
+    -- fills
+    if styles.fills.count != 0 then
+      xutl_xlsb.put_simple_record(stream, 603, int2raw(styles.fills.count)); -- BrtBeginFills
+      for fillId in styles.fills.first .. styles.fills.last loop
+        -- BrtFill
+        xutl_xlsb.put_PatternFill(stream, styles.fills(fillId).patternFill);
+      end loop;
+      xutl_xlsb.put_simple_record(stream, 604); -- BrtEndFills
+    end if;
+    
+    -- borders
+    if styles.borders.count != 0 then
+      xutl_xlsb.put_simple_record(stream, 613, int2raw(styles.borders.count)); -- BrtBeginBorders
+      for borderId in styles.borders.first .. styles.borders.last loop
+        -- BrtBorder
+        xutl_xlsb.put_Border(stream, styles.borders(borderId));
+      end loop;
+      xutl_xlsb.put_simple_record(stream, 614); -- BrtEndBorders
+    end if;
+    
+    -- cellStyleXfs
+    xutl_xlsb.put_simple_record(stream, 626, int2raw(1));  -- BrtBeginCellStyleXFs
+    xutl_xlsb.put_XF(stream); -- BrtXF
+    xutl_xlsb.put_simple_record(stream, 627);  -- BrtEndCellStyleXFs
+    
+    -- cellXfs
+    if styles.cellXfs.count != 0 then
+      xutl_xlsb.put_simple_record(stream, 617, int2raw(styles.cellXfs.count));  -- BrtBeginCellXFs
+      for xfId in styles.cellXfs.first .. styles.cellXfs.last loop
+        -- BrtXF
+        xutl_xlsb.put_XF(stream 
+                       , xfId       => styles.cellXfs(xfId).xfId
+                       , numFmtId   => styles.cellXfs(xfId).numFmtId
+                       , fontId     => styles.cellXfs(xfId).fontId
+                       , fillId     => styles.cellXfs(xfId).fillId
+                       , borderId   => styles.cellXfs(xfId).borderId
+                       , hAlignment => styles.cellXfs(xfId).alignment.horizontal
+                       , vAlignment => styles.cellXfs(xfId).alignment.vertical
+                       );
+      end loop;
+      xutl_xlsb.put_simple_record(stream, 618);  -- BrtEndCellXFs
+    end if;
+    
+    -- cellStyles
+    xutl_xlsb.put_simple_record(stream, 619, int2raw(1));  -- BrtBeginStyles
+    xutl_xlsb.put_BuiltInStyle(stream, 0, 'Normal');  -- BrtStyle
+    xutl_xlsb.put_simple_record(stream, 620);  -- BrtEndStyles    
+    
+    -- dxfs
+    xutl_xlsb.put_simple_record(stream, 505, int2raw(0));  -- BrtBeginDXFs
+    xutl_xlsb.put_simple_record(stream, 506);  -- BrtEndDXFs 
+    
+    -- tableStyles?
+    
+    xutl_xlsb.put_simple_record(stream, 279); -- BrtEndStyleSheet
+    xutl_xlsb.flush_stream(stream);
+    addPart(ctx, partName, MT_STYLES_BIN, stream.content);
+    
+  end;
+
   procedure createSharedStrings (
     ctx   in out nocopy context_t
   )
@@ -1526,6 +1642,24 @@ create or replace package body ExcelGen is
       addPart(ctx, 'xl/sharedStrings.xml', MT_SHAREDSTRINGS, stream.content);
     end if;
     debug('end create sst');
+  end;
+
+  procedure createSharedStringsBin (
+    ctx   in out nocopy context_t
+  )
+  is
+    stream  xutl_xlsb.Stream_T;
+  begin
+    if ctx.string_cnt != 0 then
+      stream := xutl_xlsb.new_stream();
+      xutl_xlsb.put_BeginSst(stream, ctx.string_cnt, ctx.string_map.count); -- BrtBeginSst
+      for i in 1 .. ctx.string_list.count loop
+        xutl_xlsb.put_SSTItem(stream, ctx.string_list(i));
+      end loop;
+      xutl_xlsb.put_simple_record(stream, 160); -- BrtEndSst
+      xutl_xlsb.flush_stream(stream);
+      addPart(ctx, 'xl/sharedStrings.bin', MT_SHAREDSTRINGS_BIN, stream.content);
+    end if;
   end;
   
   procedure createWorksheetImpl (
@@ -1730,7 +1864,7 @@ create or replace package body ExcelGen is
       part.rels := CT_Relationships();
       
       if sd.formatAsTable then
-        tableId := addTable(ctx, sheetRange.expr, sd.header.show, sd.header.autoFilter, sd.tableStyle, sd.sqlMetadata.columnList);
+        tableId := addTable(ctx, sheetRange, sd.header.show, sd.header.autoFilter, sd.tableStyle, sd.sqlMetadata.columnList);
         sheet.tableParts.extend;
         sheet.tableParts(sheet.tableParts.last) := tableId;
         
@@ -1766,6 +1900,257 @@ create or replace package body ExcelGen is
 
   end;
 
+  procedure createWorksheetBinImpl (
+    ctx  in out nocopy context_t
+  , sd   in out nocopy sheet_definition_t
+  )
+  is
+    data            data_t;
+    nrows           integer;
+    rowIdx          integer := 0;
+    --colIdx          pls_integer;
+    --cellRef         varchar2(10);
+    sst_idx         pls_integer;
+    stream          xutl_xlsb.Stream_T;
+
+    dateXfId        pls_integer := putCellXf(ctx.workbook.styles, nvl(ctx.defaultDateFmt, DEFAULT_DATE_FMT));
+    timestampXfId   pls_integer := putCellXf(ctx.workbook.styles, nvl(ctx.defaultTimestampFmt, DEFAULT_TIMESTAMP_FMT));
+
+    sheetRange      range_t;
+    tableId         pls_integer;
+    rId             varchar2(256);
+    
+    part            part_t;
+    sheet           CT_Sheet;
+    
+    partitionStart  pls_integer;
+    partitionStop   pls_integer;
+    
+  begin
+    
+    -- prefetch
+    nrows := dbms_sql.fetch_rows(sd.sqlMetadata.cursorNumber);
+    
+    if nrows != 0 or ( nrows = 0 and sd.sqlMetadata.partitionId = 0 ) then
+    
+      stream := xutl_xlsb.new_stream();  
+      
+      xutl_xlsb.put_simple_record(stream, 129);  -- BrtBeginSheet
+      
+      if sd.tabColor is not null then
+        xutl_xlsb.put_WsProp(stream, sd.tabColor);
+      end if;
+      
+
+      if sd.header.show and sd.header.isFrozen then
+        xutl_xlsb.put_simple_record(stream, 133);  -- BrtBeginWsViews
+        xutl_xlsb.put_BeginWsView(stream);  -- BrtBeginWsView
+        -- BrtPane : 
+        xutl_xlsb.put_FrozenPane(stream
+                               , numRows => 1  -- num of frozen rows (ySplit)
+                               , numCols => 0  -- num of frozen columns  (xSplit)
+                               , topRow  => 1  -- first row of bottom-right pane
+                               , leftCol => 0  -- first column of bottom-right pane
+                               );
+        xutl_xlsb.put_simple_record(stream, 138);  -- BrtEndWsView
+        xutl_xlsb.put_simple_record(stream, 134);  -- BrtEndWsViews
+      end if;
+
+      
+      xutl_xlsb.put_simple_record(stream, 145);  -- BrtBeginSheetData
+      
+      -- header row
+      if sd.header.show then
+        rowIdx := rowIdx + 1;
+        xutl_xlsb.put_RowHdr(stream, rowIdx - 1);
+        for i in 1 .. sd.sqlMetadata.columnList.count loop
+          sst_idx := put_string(ctx, sd.sqlMetadata.columnList(i).name);
+          --cellRef := sd.sqlMetadata.columnList(i).colRef||to_char(rowIdx);
+          xutl_xlsb.put_CellIsst(stream
+                               , colIndex => i - 1
+                               , styleRef => nvl(sd.header.xfId, 0)
+                               , isst     => sst_idx - 1
+                               );
+        end loop;
+      end if;
+      
+      partitionStart := sd.sqlMetadata.r_num + nrows;
+      partitionStop := partitionStart + sd.sqlMetadata.partitionSize - 1;
+      
+      -- data rows
+      while nrows != 0 loop
+        
+        rowIdx := rowIdx + 1;
+        xutl_xlsb.put_RowHdr(stream, rowIdx - 1);
+        
+        for i in 1 .. sd.sqlMetadata.columnList.count loop
+          
+          --cellRef := sd.sqlMetadata.columnList(i).colRef||to_char(rowIdx);
+          
+          case sd.sqlMetadata.columnList(i).type
+          when dbms_sql.VARCHAR2_TYPE then
+            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.varchar2_value);
+            if data.varchar2_value is not null then
+              sst_idx := put_string(ctx, data.varchar2_value);
+              xutl_xlsb.put_CellIsst(stream, i-1, 0, sst_idx-1);
+            end if;
+            
+          when dbms_sql.CHAR_TYPE then
+            dbms_sql.column_value_char(sd.sqlMetadata.cursorNumber, i, data.char_value);
+            if data.char_value is not null then
+              data.varchar2_value := rtrim(data.char_value);
+              sst_idx := put_string(ctx, data.varchar2_value);
+              xutl_xlsb.put_CellIsst(stream, i-1, 0, sst_idx-1);
+            end if;
+            
+          when dbms_sql.NUMBER_TYPE then
+            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.number_value);
+            xutl_xlsb.put_CellNumber(stream, i-1, 0, data.number_value);
+            
+          when dbms_sql.DATE_TYPE then
+            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.date_value);
+            xutl_xlsb.put_CellNumber(stream, i-1, dateXfId, toOADate(dt => data.date_value));
+            
+          when dbms_sql.TIMESTAMP_TYPE then
+            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.ts_value);
+            data.ts_value := timestampRound(data.ts_value, 3);
+            xutl_xlsb.put_CellNumber(stream, i-1, timestampXfId, toOADate(ts => data.ts_value));
+            
+          when dbms_sql.TIMESTAMP_WITH_TZ_TYPE then
+            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.tstz_value);
+            data.ts_value := timestampRound(data.tstz_value, 3);
+            xutl_xlsb.put_CellNumber(stream, i-1, timestampXfId, toOADate(ts => data.tstz_value));
+            
+          when dbms_sql.CLOB_TYPE then      
+            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.clob_value);
+            if data.clob_value is not null and dbms_lob.getlength(data.clob_value) != 0 then
+              -- try conversion to VARCHAR2
+              begin
+                data.varchar2_value := to_char(data.clob_value);
+                sst_idx := put_string(ctx, data.varchar2_value);
+                xutl_xlsb.put_CellIsst(stream, i-1, 0, sst_idx-1);
+              exception
+                when value_error then
+                  -- stream CLOB content as an inline string, up to 32767 chars
+                  xutl_xlsb.put_CellSt(stream, i-1, 0, lobValue => data.clob_value);
+              end;
+            end if;
+            
+          end case;
+          
+        end loop;
+        
+        sd.sqlMetadata.r_num := sd.sqlMetadata.r_num + 1;
+        
+        if rowIdx = MAX_ROW_NUMBER then
+          if not sd.sqlMetadata.partitionBySize then
+            -- force closing cursor
+            nrows := 0;
+          end if;
+          exit;
+        end if;
+        
+        exit when sd.sqlMetadata.r_num = partitionStop;
+        
+        -- fetch next row
+        nrows := dbms_sql.fetch_rows(sd.sqlMetadata.cursorNumber);
+          
+      end loop;
+      
+      debug('end fetch');
+      
+      xutl_xlsb.put_simple_record(stream, 146);  -- BrtEndSheetData
+      
+      sheetRange := makeRange(sd.sqlMetadata.columnList(1).colRef, 1, sd.sqlMetadata.columnList(sd.sqlMetadata.columnList.last).colRef, rowIdx);
+      
+      -- autoFilter
+      if sd.header.show and sd.header.autoFilter then
+        if not sd.formatAsTable then
+          sheet.filterRange := sheetRange;
+          ctx.workbook.hasDefinedNames := true;
+          xutl_xlsb.put_BeginAFilter(
+            stream
+          , firstRow    => sheetRange.start_ref.r - 1
+          , firstCol    => sheetRange.start_ref.cn - 1
+          , lastRow     => sheetRange.end_ref.r - 1
+          , lastCol     => sheetRange.end_ref.cn - 1
+          );
+          xutl_xlsb.put_simple_record(stream, 162);  -- BrtEndAFilter
+        end if;
+      end if;
+         
+      -- new sheet
+      sd.sqlMetadata.partitionId := sd.sqlMetadata.partitionId + 1;
+      ctx.workbook.sheets.extend;
+      sheet.sheetId := ctx.workbook.sheets.last;
+      sheet.name := sd.sheetName;
+      if sd.sqlMetadata.partitionBySize then
+        sheet.name := replace(sheet.name, '${PNUM}', to_char(sd.sqlMetadata.partitionId));
+        sheet.name := replace(sheet.name, '${PSTART}', to_char(partitionStart));
+        sheet.name := replace(sheet.name, '${PSTOP}', to_char(sd.sqlMetadata.r_num));
+      end if;
+      
+      -- check name validity
+      if translate(sheet.name, '_\/*?:[]', '_') != sheet.name 
+         or substr(sheet.name, 1, 1) = '''' 
+         or substr(sheet.name, -1) = ''''
+         or length(sheet.name) > 31 
+      then
+        error('Invalid sheet name: %s', sheet.name);
+      end if;
+      
+      -- check name uniqueness
+      if ctx.workbook.sheetMap.exists(sheet.name) then
+        error('Duplicate sheet name: %s', sheet.name);
+      end if;
+      
+      sheet.partName := 'xl/worksheets/sheet'||to_char(sheet.sheetId)||'.bin';
+      sheet.tableParts := CT_TableParts();
+
+      -- new sheet part
+      part.name := sheet.partName;
+      part.contentType := MT_WORKSHEET_BIN;
+      part.rels := CT_Relationships();
+      
+      if sd.formatAsTable then
+        tableId := addTable(ctx, sheetRange, sd.header.show, sd.header.autoFilter, sd.tableStyle, sd.sqlMetadata.columnList);
+        sheet.tableParts.extend;
+        sheet.tableParts(sheet.tableParts.last) := tableId;
+        
+        -- table parts
+        if sheet.tableParts.count != 0 then
+          xutl_xlsb.put_simple_record(stream, 660, int2raw(sheet.tableParts.count)); -- BrtBeginListParts
+          for i in 1 .. sheet.tableParts.count loop
+            rId := addRelationship(part, RS_TABLE, ctx.workbook.tables(sheet.tableParts(i)).partName);
+            xutl_xlsb.put_ListPart(stream, rId);  -- BrtListPart
+          end loop;
+          xutl_xlsb.put_simple_record(stream, 662);  -- BrtEndListParts
+        end if;
+      end if;
+      
+      xutl_xlsb.put_simple_record(stream, 130);  -- BrtEndSheet
+      
+      xutl_xlsb.flush_stream(stream);
+      
+      part.contentBin := stream.content;
+      part.isBinary := true;
+      
+      -- add sheet to workbook
+      ctx.workbook.sheets(sheet.sheetId) := sheet;
+      ctx.workbook.sheetMap(sheet.name) := sheet.sheetId;
+      
+      -- add sheet part to package
+      addPart(ctx, part);
+    
+    end if;
+      
+    if nrows = 0 then
+      debug('close cursor');
+      dbms_sql.close_cursor(sd.sqlMetadata.cursorNumber);
+    end if;
+
+  end;
+
   procedure createWorksheet (
     ctx         in out nocopy context_t
   , sheetIndex  in pls_integer
@@ -1777,7 +2162,12 @@ create or replace package body ExcelGen is
     prepareCursor(sheetDefinition.sqlMetadata);
     
     while dbms_sql.is_open(sheetDefinition.sqlMetadata.cursorNumber) loop
-      createWorksheetImpl(ctx, sheetDefinition);
+      case ctx.fileType
+      when FILE_XLSX then
+        createWorksheetImpl(ctx, sheetDefinition);
+      when FILE_XLSB then
+        createWorksheetBinImpl(ctx, sheetDefinition);
+      end case;
     end loop;
 
   end;
@@ -1790,11 +2180,11 @@ create or replace package body ExcelGen is
     tab     CT_Table := ctx.workbook.tables(tableId);
     stream  stream_t := new_stream();
   begin
-    stream_write(stream, '<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="'||to_char(tab.id)||'" name="'||tab.name||'" displayName="'||tab.name||'" ref="'||tab.ref||'"'||
+    stream_write(stream, '<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="'||to_char(tab.id)||'" name="'||tab.name||'" displayName="'||tab.name||'" ref="'||tab.ref.expr||'"'||
                          case when not tab.showHeader then ' headerRowCount="0"' end ||
                          '>');
     if tab.showHeader and tab.autoFilter then
-      stream_write(stream, '<autoFilter ref="'||tab.ref||'"/>');
+      stream_write(stream, '<autoFilter ref="'||tab.ref.expr||'"/>');
     end if;
     stream_write(stream, '<tableColumns count="'||to_char(tab.cols.count)||'">');
     for i in 1 .. tab.cols.count loop
@@ -1807,6 +2197,52 @@ create or replace package body ExcelGen is
     stream_write(stream, '</table>');
     stream_flush(stream);
     addPart(ctx, tab.partName, MT_TABLE, stream.content);
+  end;
+  
+  procedure createTableBin (
+    ctx      in out nocopy context_t 
+  , tableId  in pls_integer
+  )
+  is
+    tab     CT_Table := ctx.workbook.tables(tableId);
+    stream  xutl_xlsb.Stream_T := xutl_xlsb.new_stream();
+  begin
+
+    xutl_xlsb.put_BeginList(
+      stream
+    , tableId     => tab.id
+    , name        => tab.name
+    , displayName => tab.name
+    , showHeader  => tab.showHeader
+    , firstRow    => tab.ref.start_ref.r - 1
+    , firstCol    => tab.ref.start_ref.cn - 1
+    , lastRow     => tab.ref.end_ref.r - 1
+    , lastCol     => tab.ref.end_ref.cn - 1
+    );
+    
+    if tab.showHeader and tab.autoFilter then
+      xutl_xlsb.put_BeginAFilter(
+        stream
+      , firstRow    => tab.ref.start_ref.r - 1
+      , firstCol    => tab.ref.start_ref.cn - 1
+      , lastRow     => tab.ref.end_ref.r - 1
+      , lastCol     => tab.ref.end_ref.cn - 1
+      );
+      xutl_xlsb.put_simple_record(stream, 162);  -- BrtEndAFilter
+    end if;
+    
+    xutl_xlsb.put_simple_record(stream, 345, int2raw(tab.cols.count));  -- BrtBeginListCols
+    for i in 1 .. tab.cols.count loop
+      xutl_xlsb.put_BeginListCol(stream, tab.cols(i).id, tab.cols(i).name); -- BrtBeginListCol
+      xutl_xlsb.put_simple_record(stream, 348);  -- BrtEndListCol
+    end loop;
+    xutl_xlsb.put_simple_record(stream, 346);  -- BrtEndListCols
+    
+    xutl_xlsb.put_TableStyleClient(stream, tab.styleName);  -- BrtTableStyleClient
+    
+    xutl_xlsb.put_simple_record(stream, 344);  -- BrtEndList
+    xutl_xlsb.flush_stream(stream);
+    addPart(ctx, tab.partName, MT_TABLE_BIN, stream.content);
   end;
   
   procedure createWorkbook (
@@ -1869,6 +2305,87 @@ create or replace package body ExcelGen is
     
   end;
 
+  procedure createWorkbookBin (
+    ctx   in out nocopy context_t
+  )
+  is
+    stream  xutl_xlsb.Stream_T := xutl_xlsb.new_stream();
+    part    part_t;
+    filterRange  range_t;
+    links        xutl_xlsb.SupportingLinks_T;
+  begin
+    part.name := 'xl/workbook.bin';
+    part.contentType := null;
+    part.rels := CT_Relationships();
+    
+    xutl_xlsb.put_simple_record(stream, 131); -- BrtBeginBook
+    xutl_xlsb.put_defaultBookViews(stream);
+    xutl_xlsb.put_simple_record(stream, 143); -- BrtBeginBundleShs
+    
+    for i in 1 .. ctx.workbook.sheets.count loop
+      -- add sheet relationships
+      ctx.workbook.sheets(i).rId := addRelationship(part, RS_WORKSHEET, ctx.workbook.sheets(i).partName);
+      xutl_xlsb.put_BundleSh(stream, ctx.workbook.sheets(i).sheetId, ctx.workbook.sheets(i).rId, ctx.workbook.sheets(i).name);
+    end loop;
+    
+    xutl_xlsb.put_simple_record(stream, 144); -- BrtEndBundleShs
+    
+    if ctx.workbook.hasDefinedNames then
+      
+      xutl_xlsb.put_simple_record(stream, 353); -- BrtBeginExternals
+      xutl_xlsb.put_simple_record(stream, 357); -- BrtSupSelf
+      
+      -- generate supporting links
+      for i in 1 .. ctx.workbook.sheets.count loop
+        if ctx.workbook.sheets(i).filterRange.expr is not null then
+          ctx.workbook.sheets(i).filterXti := 
+            xutl_xlsb.add_SupportingLink(links
+                                        , 0    -- ref to BrtSupSelf record
+                                        , i-1  -- bundleSh index
+                                        );
+        end if;
+      end loop;
+      xutl_xlsb.put_ExternSheet(stream, links);  -- BrtExternSheet
+      
+      xutl_xlsb.put_simple_record(stream, 354); -- BrtEndExternals
+    
+      for i in 1 .. ctx.workbook.sheets.count loop
+        if ctx.workbook.sheets(i).filterRange.expr is not null then
+          filterRange := ctx.workbook.sheets(i).filterRange;
+          xutl_xlsb.put_FilterDatabase(stream
+                                     , bundleShIndex => i-1
+                                     , xti           => ctx.workbook.sheets(i).filterXti
+                                     , firstRow      => filterRange.start_ref.r - 1
+                                     , firstCol      => filterRange.start_ref.cn - 1
+                                     , lastRow       => filterRange.end_ref.r - 1
+                                     , lastCol       => filterRange.end_ref.cn - 1
+                                     );
+        end if;
+      end loop;
+      
+    end if;
+    
+    xutl_xlsb.put_simple_record(stream, 132);  -- BrtEndBook
+    xutl_xlsb.flush_stream(stream);
+    part.contentBin := stream.content;
+    part.isBinary := true;
+    addPart(ctx, part);
+    
+    createStylesheetBin(ctx, ctx.workbook.styles, 'xl/styles.bin');
+    addRelationship(ctx, part.name, RS_STYLES, 'xl/styles.bin');
+    
+    createSharedStringsBin(ctx);
+    addRelationship(ctx, part.name, RS_SHAREDSTRINGS, 'xl/sharedStrings.bin');
+    
+    for tableId in 1 .. ctx.workbook.tables.count loop
+      createTableBin(ctx, tableId);
+    end loop;
+    
+    -- add package-level relationship to workbook part
+    addRelationship(ctx, null, RS_OFFICEDOCUMENT, part.name);
+    
+  end;
+
   procedure createContentTypes (
     ctx   in out nocopy context_t
   )
@@ -1880,6 +2397,9 @@ create or replace package body ExcelGen is
     -- default extensions
     stream_write(stream, '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>');
     stream_write(stream, '<Default Extension="xml" ContentType="application/xml"/>');
+    if ctx.fileType = FILE_XLSB then
+      stream_write(stream, '<Default Extension="bin" ContentType="application/vnd.ms-excel.sheet.binary.macroEnabled.main"/>');
+    end if;
     
     for i in 1 .. ctx.pck.parts.count loop
       if ctx.pck.parts(i).contentType is not null then
@@ -1922,7 +2442,7 @@ create or replace package body ExcelGen is
 
   begin
     
-    binaryContent := xmlToBlob(part.content);
+    binaryContent := case when part.isBinary then part.contentBin else xmlToBlob(part.content) end;
     binaryContentSize := dbms_lob.getlength(binaryContent);
     gzContent := utl_compress.lz_compress(binaryContent);
     gzSize := dbms_lob.getlength(gzContent);
@@ -2007,7 +2527,13 @@ create or replace package body ExcelGen is
       dbms_lob.append(zip.content, entry.content);
       pos := pos + dbms_lob.getlength(entry.content);
       dbms_lob.freetemporary(entry.content);
-      dbms_lob.freetemporary(pck.parts(i).content);
+      
+      if pck.parts(i).isBinary then
+        dbms_lob.freetemporary(pck.parts(i).contentBin);
+      else
+        dbms_lob.freetemporary(pck.parts(i).content);
+      end if;
+      
       zip.entries(i) := entry;
     end loop;
     
@@ -2042,12 +2568,15 @@ create or replace package body ExcelGen is
     
   end;
 
-  function createContext
+  function createContext (
+    p_type  in pls_integer default FILE_XLSX 
+  )
   return ctxHandle
   is
     ctxId  ctxHandle := nvl(ctx_cache.last, 0) + 1;
     ctx    context_t;
   begin
+    ctx.fileType := nvl(p_type, FILE_XLSX);
     ctx.pck.parts := part_list_t();
     ctx.pck.rels := CT_Relationships();
     ctx.workbook := new_workbook();
@@ -2400,7 +2929,14 @@ create or replace package body ExcelGen is
       sheetIndex := ctx.sheetDefinitionMap.next(sheetIndex);
     end loop;
     
-    createWorkbook(ctx);
+    -- workbook
+    case ctx.fileType
+    when FILE_XLSX then
+      createWorkbook(ctx);
+    when FILE_XLSB then
+      createWorkbookBin(ctx);
+    end case;
+    
     createContentTypes(ctx);
     createRels(ctx);
     

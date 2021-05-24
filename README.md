@@ -1,7 +1,8 @@
 
 # ExcelGen - An Oracle PL/SQL Generator for MS Excel Files
+<p align="center"><img src="./resources/banner.png"/></p>
 
-ExcelGen is a PL/SQL utility to create Excel files (.xlsx) out of SQL data sources (query strings or cursors), with automatic pagination over multiple sheets.  
+ExcelGen is a PL/SQL utility to create Excel files (.xlsx, .xlsb) out of SQL data sources (query strings or cursors), with automatic pagination over multiple sheets.  
 It supports basic formatting options for the header, and table layout.
 
 ## Content
@@ -16,6 +17,7 @@ It supports basic formatting options for the header, and table layout.
 
 ## What's New in...
 
+> Version 2.0 : support for XSLB format output  
 > Version 1.0 : added encryption features  
 > Version 0.1b : Beta version
 
@@ -29,6 +31,9 @@ Please create an issue [here](https://github.com/mbleron/ExcelGen/issues).
 ### Getting source code
 
 Clone this repository or download it as a zip archive.  
+Note : [ExcelCommons](https://github.com/mbleron/ExcelCommons) dependency is provided as a submodule, so use the clone command with recurse-submodules option :  
+`git clone --recurse-submodules https://github.com/mbleron/ExcelGen.git`  
+or download ExcelCommons separately as a zip archive and extract the root folder into ExcelCommons folder.  
 
 Clone or download [MSUtilities](https://github.com/mbleron/MSUtilities).  
 
@@ -40,7 +45,7 @@ ExcelGen requires Oracle Database 11\.2\.0\.1 and onwards.
 
 Using SQL*Plus, connect to the target database schema, then :  
 1. Install [MSUtilities](https://github.com/mbleron/MSUtilities) packages.  
-2. Install ExcelGen using script [`install.sql`](./install.sql).  
+2. Install ExcelGen and dependencies using script [`install.sql`](./install.sql).  
 
 ## Quick Start
 
@@ -87,9 +92,15 @@ See the following sections for more examples and detailed description of ExcelGe
 This function creates and returns a new generator handle.  
 
 ```sql
-function createContext
+function createContext (
+  p_type  in pls_integer default FILE_XLSX 
+)
 return ctxHandle;
 ```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_type`|Output file format. <br/>One of `FILE_XLSX`, `FILE_XLSB`. Default is `FILE_XLSX`.|No
 
 ---
 ### closeContext procedure
@@ -769,6 +780,10 @@ end;
 
 
 ## CHANGELOG
+
+### 2.0 (2021-05-23)
+* Support for XLSB format output
+* New dependencies : ExcelTypes and XUTL_XLSB packages
 
 ### 1.1 (2021-04-30)
 * Fix : issue #1
