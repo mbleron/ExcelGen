@@ -1,3 +1,6 @@
 [submodule "ExcelCommons"]
 	path = ExcelCommons
 	url = https://github.com/mbleron/ExcelCommons.git
+[submodule "MSUtilities"]
+	path = MSUtilities
+	url = https://github.com/mbleron/MSUtilities.git

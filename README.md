@@ -17,7 +17,7 @@ It supports basic formatting options for the header, and table layout.
 
 ## What's New in...
 
-> Version 2.0 : support for XSLB format output  
+> Version 2.0 : support for XLSB format output  
 > Version 1.0 : added encryption features  
 > Version 0.1b : Beta version
 
@@ -31,11 +31,10 @@ Please create an issue [here](https://github.com/mbleron/ExcelGen/issues).
 ### Getting source code
 
 Clone this repository or download it as a zip archive.  
-Note : [ExcelCommons](https://github.com/mbleron/ExcelCommons) dependency is provided as a submodule, so use the clone command with recurse-submodules option :  
-`git clone --recurse-submodules https://github.com/mbleron/ExcelGen.git`  
-or download ExcelCommons separately as a zip archive and extract the root folder into ExcelCommons folder.  
 
-Clone or download [MSUtilities](https://github.com/mbleron/MSUtilities).  
+Note : [ExcelCommons](https://github.com/mbleron/ExcelCommons) and [MSUtilities](https://github.com/mbleron/MSUtilities) dependencies are provided as submodules, so use the clone command with recurse-submodules option :  
+`git clone --recurse-submodules https://github.com/mbleron/ExcelGen.git`  
+or download them separately as zip archives and extract the content of root folders into ExcelCommons and MSUtilities folders respectively.   
 
 ### Database requirement
 
@@ -44,8 +43,7 @@ ExcelGen requires Oracle Database 11\.2\.0\.1 and onwards.
 ### PL/SQL
 
 Using SQL*Plus, connect to the target database schema, then :  
-1. Install [MSUtilities](https://github.com/mbleron/MSUtilities) packages.  
-2. Install ExcelGen and dependencies using script [`install.sql`](./install.sql).  
+1. Install ExcelGen and dependencies using script [`install.sql`](./install.sql).  
 
 ## Quick Start
 
@@ -774,6 +772,21 @@ begin
   ExcelGen.createFile(ctxId, 'TEST_DIR', 'sample4.xlsx');
   ExcelGen.closeContext(ctxId);
   
+end;
+/
+```  
+
+* Creating an encrypted XLSB file : [encrypted.xlsb](./samples/encrypted.xlsb)
+
+```
+declare
+  ctxId  ExcelGen.ctxHandle;
+begin
+  ctxId := ExcelGen.createContext(ExcelGen.FILE_XLSB);
+  ExcelGen.addSheetFromQuery(ctxId, 'data', 'select ''Some sensitive information'' from dual', p_tabColor => 'red');
+  ExcelGen.setEncryption(ctxId, 'Pass123', ExcelGen.OFFICE2016);
+  ExcelGen.createFile(ctxId, 'TEST_DIR', 'encrypted.xlsb');
+  ExcelGen.closeContext(ctxId);
 end;
 /
 ```  
