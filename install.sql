@@ -1,8 +1,8 @@
 alter session set plsql_optimize_level=3;
 
 prompt Creating package XUTL_CDF ...
-@@MSUtilities/CDFReader/xutl_cdf.pks
-@@MSUtilities/CDFReader/xutl_cdf.pkb
+@@MSUtilities/CDFManager/xutl_cdf.pks
+@@MSUtilities/CDFManager/xutl_cdf.pkb
 
 prompt Creating package XUTL_OFFCRYPTO ...
 @@MSUtilities/OfficeCrypto/xutl_offcrypto.pks
