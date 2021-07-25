@@ -74,6 +74,7 @@ See the following sections for more examples and detailed description of ExcelGe
 * [setTableFormat](#settableformat-procedure)  
 * [setDateFormat](#setdateformat-procedure)  
 * [setTimestampFormat](#settimestampformat-procedure)  
+* [setNumFormat](#setnumformat-procedure)  
 * [setEncryption](#setencryption-procedure)  
 * [getFileContent](#getfilecontent-function)  
 * [createFile](#createfile-procedure)  
@@ -366,6 +367,23 @@ Parameter|Description|Mandatory
 `p_ctxId`|Context handle.|Yes
 `p_format`|Timestamp format string.|Yes
 
+---
+### setNumFormat procedure
+This procedure sets the format applied to NUMBER values in the resulting spreadsheet file.  
+The format must follow MS Excel proprietary [syntax](https://support.microsoft.com/en-us/office/create-a-custom-number-format-78f2a361-936b-4c03-8772-09fab54be7f4).  
+Default is `0.000000`.  
+
+```sql
+procedure setNumFormat (
+  p_ctxId   in ctxHandle
+, p_format  in varchar2
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_format`|Number format string.|Yes
 
 ---
 ### setEncryption procedure
