@@ -62,7 +62,7 @@ create or replace package body ExcelGen is
   
   DEFAULT_DATE_FMT       constant varchar2(32) := 'dd/mm/yyyy hh:mm:ss';
   DEFAULT_TIMESTAMP_FMT  constant varchar2(32) := 'dd/mm/yyyy hh:mm:ss.000';
-  DEFAULT_NUM_FMT        constant varchar2(32) := '0.000000';
+  DEFAULT_NUM_FMT        constant varchar2(32) := null; 
   NLS_PARAM_STRING       constant varchar2(32) := 'nls_numeric_characters=''. ''';
 
   buffer_too_small       exception;
@@ -1678,6 +1678,7 @@ create or replace package body ExcelGen is
 
     dateXfId        pls_integer := putCellXf(ctx.workbook.styles, nvl(ctx.defaultDateFmt, DEFAULT_DATE_FMT));
     timestampXfId   pls_integer := putCellXf(ctx.workbook.styles, nvl(ctx.defaultTimestampFmt, DEFAULT_TIMESTAMP_FMT));
+    -- DEFAULT_NUM_FMT is currently null, but leaving code as is to follow the pattern
     numXfId         pls_integer := putCellXf(ctx.workbook.styles, nvl(ctx.defaultNumFmt, DEFAULT_NUM_FMT));
 
     sheetRange      range_t;
@@ -1760,7 +1761,9 @@ create or replace package body ExcelGen is
             else
               data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
             end if;
-            stream_write(stream, '<c r="'||cellRef||'" s="'||to_char(numXfId)||'"><v>'||data.varchar2_value||'</v></c>');
+            stream_write(stream, '<c r="'||cellRef
+                ||case when numXfId is not null then '" s="'||to_char(numXfId) end
+                ||'"><v>'||data.varchar2_value||'</v></c>');
             
           when dbms_sql.DATE_TYPE then
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.date_value);
@@ -1918,6 +1921,7 @@ create or replace package body ExcelGen is
 
     dateXfId        pls_integer := putCellXf(ctx.workbook.styles, nvl(ctx.defaultDateFmt, DEFAULT_DATE_FMT));
     timestampXfId   pls_integer := putCellXf(ctx.workbook.styles, nvl(ctx.defaultTimestampFmt, DEFAULT_TIMESTAMP_FMT));
+    -- DEFAULT_NUM_FMT is currently null, but leaving code as is to follow the pattern
     numXfId         pls_integer := putCellXf(ctx.workbook.styles, nvl(ctx.defaultNumFmt, DEFAULT_NUM_FMT));
 
     sheetRange      range_t;
