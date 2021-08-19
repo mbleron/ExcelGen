@@ -1692,7 +1692,7 @@ create or replace package body ExcelGen is
     partitionStop   pls_integer;
     
   begin
-    
+
     -- prefetch
     nrows := dbms_sql.fetch_rows(sd.sqlMetadata.cursorNumber);
     
@@ -1762,7 +1762,7 @@ create or replace package body ExcelGen is
               data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
             end if;
             stream_write(stream, '<c r="'||cellRef
-                ||case when numXfId is not null then '" s="'||to_char(numXfId) end
+                ||case when numXfId != 0 then '" s="'||to_char(numXfId) end
                 ||'"><v>'||data.varchar2_value||'</v></c>');
             
           when dbms_sql.DATE_TYPE then
