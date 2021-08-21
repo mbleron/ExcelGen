@@ -371,7 +371,7 @@ Parameter|Description|Mandatory
 ### setNumFormat procedure
 This procedure sets the format applied to NUMBER values in the resulting spreadsheet file.  
 The format must follow MS Excel proprietary [syntax](https://support.microsoft.com/en-us/office/create-a-custom-number-format-78f2a361-936b-4c03-8772-09fab54be7f4).  
-Default is `0.000000`.  
+Default is NULL, meaning the General cell format will apply.  
 
 ```sql
 procedure setNumFormat (
@@ -811,6 +811,10 @@ end;
 
 
 ## CHANGELOG
+
+### 2.1 (2021-07-25)
+
+* Added setNumFmt procedure
 
 ### 2.0 (2021-05-23)
 * Support for XLSB format output
