@@ -32,6 +32,7 @@ create or replace package ExcelGen is
     Marc Bleron       2021-04-29     Added optional parameter p_sheetIndex in 
                                      addSheetFromXXX routines
     Marc Bleron       2021-05-13     Added XLSB support
+    Lee Lindley       2021-07-25     Added setNumFormat
 ====================================================================================== */
 
   -- file types
@@ -288,6 +289,11 @@ create or replace package ExcelGen is
   );
 
   procedure setDateFormat (
+    p_ctxId   in ctxHandle
+  , p_format  in varchar2
+  );
+
+  procedure setNumFormat (
     p_ctxId   in ctxHandle
   , p_format  in varchar2
   );
