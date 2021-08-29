@@ -96,6 +96,7 @@ create or replace package body ExcelGen is
   , type    pls_integer
   , scale   pls_integer
   , colRef  varchar2(3)
+  , xfId    pls_integer := 0
   );
   
   type column_list_t is table of column_t;
@@ -142,6 +143,12 @@ create or replace package body ExcelGen is
   , partIndices  part_index_map_t
   , rels         CT_Relationships
   , content      blob
+  );
+  
+  type defaultFmts_t is record (
+    dateFmt       varchar2(128)
+  , timestampFmt  varchar2(128)
+  , numFmt        varchar2(128)
   );
   
   type CT_BorderMap is table of pls_integer index by varchar2(32767);
@@ -251,6 +258,8 @@ create or replace package body ExcelGen is
   , autoFilter  boolean
   );
   
+  type column_fmt_map_t is table of varchar2(128) index by pls_integer;
+  
   type sheet_definition_t is record (
     sheetName      varchar2(128)
   , sheetIndex     pls_integer
@@ -259,6 +268,8 @@ create or replace package body ExcelGen is
   , formatAsTable  boolean
   , tableStyle     varchar2(32)
   , sqlMetadata    sql_metadata_t
+  , defaultFmts    defaultFmts_t
+  , columnFmtMap   column_fmt_map_t
   );
   
   type sheet_definition_map_t is table of sheet_definition_t index by pls_integer;
@@ -279,9 +290,10 @@ create or replace package body ExcelGen is
   , pck                  package_t
   , sheetDefinitionMap   sheet_definition_map_t
   , sheetIndexMap        CT_SheetMap
-  , defaultDateFmt       varchar2(128)
-  , defaultTimestampFmt  varchar2(128)
-  , defaultNumFmt        varchar2(128)
+  --, defaultDateFmt       varchar2(128)
+  --, defaultTimestampFmt  varchar2(128)
+  --, defaultNumFmt        varchar2(128)
+  , defaultFmts          defaultFmts_t
   , encryptionInfo       encryption_info_t
   , fileType             pls_integer
   );
@@ -1675,11 +1687,8 @@ create or replace package body ExcelGen is
     cellRef         varchar2(10);
     sst_idx         pls_integer;
     stream          stream_t;
-
-    dateXfId        pls_integer := putCellXf(ctx.workbook.styles, nvl(ctx.defaultDateFmt, DEFAULT_DATE_FMT));
-    timestampXfId   pls_integer := putCellXf(ctx.workbook.styles, nvl(ctx.defaultTimestampFmt, DEFAULT_TIMESTAMP_FMT));
-    -- DEFAULT_NUM_FMT is currently null, but leaving code as is to follow the pattern
-    numXfId         pls_integer := putCellXf(ctx.workbook.styles, nvl(ctx.defaultNumFmt, DEFAULT_NUM_FMT));
+    
+    cellXfId        pls_integer;
 
     sheetRange      range_t;
     tableId         pls_integer;
@@ -1737,6 +1746,7 @@ create or replace package body ExcelGen is
         for i in 1 .. sd.sqlMetadata.columnList.count loop
           
           cellRef := sd.sqlMetadata.columnList(i).colRef||to_char(rowIdx);
+          cellXfId := sd.sqlMetadata.columnList(i).xfId;
           
           case sd.sqlMetadata.columnList(i).type
           when dbms_sql.VARCHAR2_TYPE then
@@ -1762,24 +1772,24 @@ create or replace package body ExcelGen is
               data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
             end if;
             stream_write(stream, '<c r="'||cellRef
-                ||case when numXfId != 0 then '" s="'||to_char(numXfId) end
+                ||case when cellXfId != 0 then '" s="'||to_char(cellXfId) end
                 ||'"><v>'||data.varchar2_value||'</v></c>');
             
           when dbms_sql.DATE_TYPE then
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.date_value);
             data.varchar2_value := to_char(toOADate(dt => data.date_value), 'TM9', NLS_PARAM_STRING);
-            stream_write(stream, '<c r="'||cellRef||'" s="'||to_char(dateXfId)||'"><v>'||data.varchar2_value||'</v></c>');
+            stream_write(stream, '<c r="'||cellRef||'" s="'||to_char(cellXfId)||'"><v>'||data.varchar2_value||'</v></c>');
             
           when dbms_sql.TIMESTAMP_TYPE then
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.ts_value);
             data.ts_value := timestampRound(data.ts_value, 3);
             data.varchar2_value := to_char(toOADate(ts => data.ts_value), 'TM9', NLS_PARAM_STRING);
-            stream_write(stream, '<c r="'||cellRef||'" s="'||to_char(timestampXfId)||'"><v>'||data.varchar2_value||'</v></c>');
+            stream_write(stream, '<c r="'||cellRef||'" s="'||to_char(cellXfId)||'"><v>'||data.varchar2_value||'</v></c>');
             
           when dbms_sql.TIMESTAMP_WITH_TZ_TYPE then
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.tstz_value);
             data.varchar2_value := to_char(toOADate(ts => data.tstz_value), 'TM9', NLS_PARAM_STRING);
-            stream_write(stream, '<c r="'||cellRef||'" s="'||to_char(timestampXfId)||'"><v>'||data.varchar2_value||'</v></c>');
+            stream_write(stream, '<c r="'||cellRef||'" s="'||to_char(cellXfId)||'"><v>'||data.varchar2_value||'</v></c>');
             
           when dbms_sql.CLOB_TYPE then      
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.clob_value);
@@ -1914,15 +1924,10 @@ create or replace package body ExcelGen is
     data            data_t;
     nrows           integer;
     rowIdx          integer := 0;
-    --colIdx          pls_integer;
-    --cellRef         varchar2(10);
     sst_idx         pls_integer;
     stream          xutl_xlsb.Stream_T;
-
-    dateXfId        pls_integer := putCellXf(ctx.workbook.styles, nvl(ctx.defaultDateFmt, DEFAULT_DATE_FMT));
-    timestampXfId   pls_integer := putCellXf(ctx.workbook.styles, nvl(ctx.defaultTimestampFmt, DEFAULT_TIMESTAMP_FMT));
-    -- DEFAULT_NUM_FMT is currently null, but leaving code as is to follow the pattern
-    numXfId         pls_integer := putCellXf(ctx.workbook.styles, nvl(ctx.defaultNumFmt, DEFAULT_NUM_FMT));
+    
+    cellXfId        pls_integer;
 
     sheetRange      range_t;
     tableId         pls_integer;
@@ -1973,7 +1978,6 @@ create or replace package body ExcelGen is
         xutl_xlsb.put_RowHdr(stream, rowIdx - 1);
         for i in 1 .. sd.sqlMetadata.columnList.count loop
           sst_idx := put_string(ctx, sd.sqlMetadata.columnList(i).name);
-          --cellRef := sd.sqlMetadata.columnList(i).colRef||to_char(rowIdx);
           xutl_xlsb.put_CellIsst(stream
                                , colIndex => i - 1
                                , styleRef => nvl(sd.header.xfId, 0)
@@ -1993,7 +1997,7 @@ create or replace package body ExcelGen is
         
         for i in 1 .. sd.sqlMetadata.columnList.count loop
           
-          --cellRef := sd.sqlMetadata.columnList(i).colRef||to_char(rowIdx);
+          cellXfId := sd.sqlMetadata.columnList(i).xfId;
           
           case sd.sqlMetadata.columnList(i).type
           when dbms_sql.VARCHAR2_TYPE then
@@ -2013,21 +2017,21 @@ create or replace package body ExcelGen is
             
           when dbms_sql.NUMBER_TYPE then
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.number_value);
-            xutl_xlsb.put_CellNumber(stream, i-1, numXfId, data.number_value);
+            xutl_xlsb.put_CellNumber(stream, i-1, cellXfId, data.number_value);
             
           when dbms_sql.DATE_TYPE then
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.date_value);
-            xutl_xlsb.put_CellNumber(stream, i-1, dateXfId, toOADate(dt => data.date_value));
+            xutl_xlsb.put_CellNumber(stream, i-1, cellXfId, toOADate(dt => data.date_value));
             
           when dbms_sql.TIMESTAMP_TYPE then
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.ts_value);
             data.ts_value := timestampRound(data.ts_value, 3);
-            xutl_xlsb.put_CellNumber(stream, i-1, timestampXfId, toOADate(ts => data.ts_value));
+            xutl_xlsb.put_CellNumber(stream, i-1, cellXfId, toOADate(ts => data.ts_value));
             
           when dbms_sql.TIMESTAMP_WITH_TZ_TYPE then
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.tstz_value);
             data.ts_value := timestampRound(data.tstz_value, 3);
-            xutl_xlsb.put_CellNumber(stream, i-1, timestampXfId, toOADate(ts => data.tstz_value));
+            xutl_xlsb.put_CellNumber(stream, i-1, cellXfId, toOADate(ts => data.tstz_value));
             
           when dbms_sql.CLOB_TYPE then      
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.clob_value);
@@ -2165,9 +2169,26 @@ create or replace package body ExcelGen is
   )
   is
     sheetDefinition  sheet_definition_t;
+    columnFmt        varchar2(128);
+    defaultFmt       varchar2(128);
   begin
     sheetDefinition := ctx.sheetDefinitionMap(sheetIndex);
     prepareCursor(sheetDefinition.sqlMetadata);
+    
+    -- set column-level formats
+    for i in 1 .. sheetDefinition.sqlMetadata.columnList.count loop
+      columnFmt := null;
+      if sheetDefinition.columnFmtMap.exists(i) then
+        columnFmt := sheetDefinition.columnFmtMap(i);
+      end if;
+      defaultFmt := case sheetDefinition.sqlMetadata.columnList(i).type
+                    when dbms_sql.NUMBER_TYPE then coalesce(sheetDefinition.defaultFmts.numFmt, ctx.defaultFmts.numFmt, DEFAULT_NUM_FMT)
+                    when dbms_sql.DATE_TYPE then coalesce(sheetDefinition.defaultFmts.dateFmt, ctx.defaultFmts.dateFmt, DEFAULT_DATE_FMT)
+                    when dbms_sql.TIMESTAMP_TYPE then coalesce(sheetDefinition.defaultFmts.timestampFmt, ctx.defaultFmts.timestampFmt, DEFAULT_TIMESTAMP_FMT)
+                    when dbms_sql.TIMESTAMP_WITH_TZ_TYPE then coalesce(sheetDefinition.defaultFmts.timestampFmt, ctx.defaultFmts.timestampFmt, DEFAULT_TIMESTAMP_FMT)
+                    end;
+      sheetDefinition.sqlMetadata.columnList(i).xfId := putCellXf(ctx.workbook.styles, nvl(columnFmt, defaultFmt));
+    end loop;
     
     while dbms_sql.is_open(sheetDefinition.sqlMetadata.cursorNumber) loop
       case ctx.fileType
@@ -2778,7 +2799,17 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    ctx_cache(p_ctxId).defaultDateFmt := p_format;
+    ctx_cache(p_ctxId).defaultFmts.dateFmt := p_format;
+  end;
+
+  procedure setDateFormat (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle
+  , p_format   in varchar2
+  )
+  is
+  begin
+    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).defaultFmts.dateFmt := p_format;
   end;
 
   procedure setNumFormat (
@@ -2787,7 +2818,17 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    ctx_cache(p_ctxId).defaultNumFmt := p_format;
+    ctx_cache(p_ctxId).defaultFmts.numFmt := p_format;
+  end;
+
+  procedure setNumFormat (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle
+  , p_format   in varchar2
+  )
+  is
+  begin
+    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).defaultFmts.numFmt := p_format;
   end;
 
   procedure setTimestampFormat (
@@ -2796,7 +2837,28 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    ctx_cache(p_ctxId).defaultTimestampFmt := p_format;
+    ctx_cache(p_ctxId).defaultFmts.timestampFmt := p_format;
+  end;
+
+  procedure setTimestampFormat (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle
+  , p_format   in varchar2
+  )
+  is
+  begin
+    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).defaultFmts.timestampFmt := p_format;
+  end;
+  
+  procedure setColumnFormat (
+    p_ctxId     in ctxHandle
+  , p_sheetId   in sheetHandle
+  , p_columnId  in pls_integer
+  , p_format    in varchar2
+  )
+  is
+  begin
+    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).columnFmtMap(p_columnId) := p_format;
   end;
 
   procedure setBindVariableImpl (

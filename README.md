@@ -75,6 +75,7 @@ See the following sections for more examples and detailed description of ExcelGe
 * [setDateFormat](#setdateformat-procedure)  
 * [setTimestampFormat](#settimestampformat-procedure)  
 * [setNumFormat](#setnumformat-procedure)  
+* [setColumnFormat](#setcolumnformat-procedure)  
 * [setEncryption](#setencryption-procedure)  
 * [getFileContent](#getfilecontent-function)  
 * [createFile](#createfile-procedure)  
@@ -335,6 +336,8 @@ Parameter|Description|Mandatory
 ---
 ### setDateFormat procedure
 This procedure sets the format applied to DATE values in the resulting spreadsheet file.  
+It is overloaded to operate either globally in the workbook or at a given sheet level, which takes precedence.  
+
 The format must follow MS Excel proprietary [syntax](https://support.office.com/en-us/article/format-a-date-the-way-you-want-8e10019e-d5d8-47a1-ba95-db95123d273e).  
 Default is `dd/mm/yyyy hh:mm:ss`.  
 
@@ -344,15 +347,25 @@ procedure setDateFormat (
 , p_format  in varchar2
 );
 ```
+```sql
+procedure setDateFormat (
+  p_ctxId   in ctxHandle
+, p_sheetId in sheetHandle
+, p_format  in varchar2
+);
+```
 
 Parameter|Description|Mandatory
 ---|---|---
 `p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
 `p_format`|Date format string.|Yes
 
 ---
 ### setTimestampFormat procedure
 This procedure sets the format applied to TIMESTAMP values in the resulting spreadsheet file.  
+It is overloaded to operate either globally in the workbook or at a given sheet level, which takes precedence.  
+
 Default is `dd/mm/yyyy hh:mm:ss.000`.  
 
 ```sql
@@ -361,15 +374,25 @@ procedure setTimestampFormat (
 , p_format  in varchar2
 );
 ```
+```sql
+procedure setTimestampFormat (
+  p_ctxId   in ctxHandle
+, p_sheetId in sheetHandle
+, p_format  in varchar2
+);
+```
 
 Parameter|Description|Mandatory
 ---|---|---
 `p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
 `p_format`|Timestamp format string.|Yes
 
 ---
 ### setNumFormat procedure
 This procedure sets the format applied to NUMBER values in the resulting spreadsheet file.  
+It is overloaded to operate either globally in the workbook or at a given sheet level, which takes precedence.  
+
 The format must follow MS Excel proprietary [syntax](https://support.microsoft.com/en-us/office/create-a-custom-number-format-78f2a361-936b-4c03-8772-09fab54be7f4).  
 Default is NULL, meaning the General cell format will apply.  
 
@@ -379,11 +402,42 @@ procedure setNumFormat (
 , p_format  in varchar2
 );
 ```
+```sql
+procedure setNumFormat (
+  p_ctxId   in ctxHandle
+, p_sheetId in sheetHandle
+, p_format  in varchar2
+);
+```
 
 Parameter|Description|Mandatory
 ---|---|---
 `p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
 `p_format`|Number format string.|Yes
+
+---
+### setColumnFormat procedure
+This procedure sets the format applied to values in a given column of a sheet.  
+It takes precedence over existing workbook or sheet-level settings for NUMBER, DATE or TIMESTAMP data types.  
+
+The format must follow MS Excel proprietary [syntax](https://support.microsoft.com/en-us/office/create-a-custom-number-format-78f2a361-936b-4c03-8772-09fab54be7f4).  
+
+```sql
+procedure setColumnFormat (
+  p_ctxId     in ctxHandle
+, p_sheetId   in sheetHandle
+, p_columnId  in pls_integer
+, p_format    in varchar2
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
+`p_columnId`|Column id (1-based index).|Yes
+`p_format`|Format string.|Yes
 
 ---
 ### setEncryption procedure
@@ -809,12 +863,68 @@ end;
 /
 ```  
 
+* Setting sheet or column-level cell formats : [sample5.xlsx](./samples/sample5.xlsx)
+
+```
+declare
+  ctxId    ExcelGen.ctxHandle;
+  sheet1   ExcelGen.sheetHandle;
+  sheet2   ExcelGen.sheetHandle;
+  rc       sys_refcursor;
+begin
+  
+  ctxId := ExcelGen.createContext(ExcelGen.FILE_XLSX);
+  
+  open rc for
+  select sysdate D1
+       , sysdate D2
+       , 1 N1
+       , 1.26 N2
+       , systimestamp T1
+       , systimestamp T2
+  from dual ;
+  
+  sheet1 := ExcelGen.addSheetFromCursor(ctxId, 'a', rc);
+  ExcelGen.setHeader(ctxId, sheet1);
+  
+  -- column #1 format
+  ExcelGen.setColumnFormat(ctxId, sheet1, 1, 'dd/mm/yyyy');
+  
+  -- column #4 format
+  ExcelGen.setColumnFormat(ctxId, sheet1, 4, '0.0');
+  
+  -- column #5 format
+  ExcelGen.setColumnFormat(ctxId, sheet1, 5, 'dd/mm/yyyy hh:mm:ss');
+  
+  -- default sheet-level date format
+  ExcelGen.setDateFormat(ctxId, sheet1, 'yyyy-mm');
+  
+  -- default sheet-level number format
+  ExcelGen.setNumFormat(ctxId, sheet1, '0.00');
+  
+  -- default sheet-level timestamp format
+  ExcelGen.setTimestampFormat(ctxId, sheet1, 'hh:mm:ss.000');
+  
+  -- another sheet with default wookbook-level formats
+  sheet2 := ExcelGen.addSheetFromQuery(ctxId, 'b', 'select sysdate D1, 12345 N1, systimestamp T1 from dual');
+
+  ExcelGen.createFile(ctxId, 'XL_DATA_DIR', 'sample5.xlsx');
+  ExcelGen.closeContext(ctxId);
+  
+end;
+/
+```  
+
 
 ## CHANGELOG
 
+### 2.2 (2021-08-23)
+
+* Added setColumnFormat procedure
+
 ### 2.1 (2021-07-25)
 
-* Added setNumFmt procedure
+* Added setNumFormat procedure
 
 ### 2.0 (2021-05-23)
 * Support for XLSB format output

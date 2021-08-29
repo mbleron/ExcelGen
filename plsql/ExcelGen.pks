@@ -33,6 +33,7 @@ create or replace package ExcelGen is
                                      addSheetFromXXX routines
     Marc Bleron       2021-05-13     Added XLSB support
     Lee Lindley       2021-07-25     Added setNumFormat
+    Marc Bleron       2021-08-22     Added setColumnFormat and setXXXFormat overloads
 ====================================================================================== */
 
   -- file types
@@ -293,14 +294,39 @@ create or replace package ExcelGen is
   , p_format  in varchar2
   );
 
+  procedure setDateFormat (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle
+  , p_format   in varchar2
+  );
+
   procedure setNumFormat (
     p_ctxId   in ctxHandle
   , p_format  in varchar2
   );
 
+  procedure setNumFormat (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle
+  , p_format   in varchar2
+  );
+
   procedure setTimestampFormat (
     p_ctxId   in ctxHandle
   , p_format  in varchar2
+  );
+
+  procedure setTimestampFormat (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle
+  , p_format   in varchar2
+  );
+
+  procedure setColumnFormat (
+    p_ctxId     in ctxHandle
+  , p_sheetId   in sheetHandle
+  , p_columnId  in pls_integer
+  , p_format    in varchar2
   );
 
   procedure setEncryption (
