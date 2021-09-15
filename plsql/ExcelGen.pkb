@@ -60,6 +60,8 @@ create or replace package body ExcelGen is
   DIGITS                 constant varchar2(10) := '0123456789';
   LETTERS                constant varchar2(26) := 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   
+  CNTRL_CHARS            constant varchar2(32) := to_char(unistr('\0000\0001\0002\0003\0004\0005\0006\0007\0008\000B\000C\000E\000F\0010\0011\0012\0013\0014\0015\0016\0017\0018\0019\001A\001B\001C\001D\001E\001F'));
+  
   DEFAULT_DATE_FMT       constant varchar2(32) := 'dd/mm/yyyy hh:mm:ss';
   DEFAULT_TIMESTAMP_FMT  constant varchar2(32) := 'dd/mm/yyyy hh:mm:ss.000';
   DEFAULT_NUM_FMT        constant varchar2(32) := null; 
@@ -388,6 +390,51 @@ create or replace package body ExcelGen is
       end loop;
     end if;
     return l_result;
+  end;
+
+  function stripXmlControlChars (str in varchar2)
+  return varchar2
+  is
+  begin
+    return translate(str, '_'||CNTRL_CHARS, '_');
+  end;  
+
+  function escapeXmlControlChars (str in varchar2)
+  return varchar2
+  is
+    output  varchar2(32767);
+  begin
+    -- using a bunch of replace's instead of a loop
+    output := replace(str, chr(0), '_x0000_');
+    output := replace(output, chr(1), '_x0001_');
+    output := replace(output, chr(2), '_x0002_');
+    output := replace(output, chr(3), '_x0003_');
+    output := replace(output, chr(4), '_x0004_');
+    output := replace(output, chr(5), '_x0005_');
+    output := replace(output, chr(6), '_x0006_');
+    output := replace(output, chr(7), '_x0007_');
+    output := replace(output, chr(8), '_x0008_');
+    output := replace(output, chr(11), '_x000B_');
+    output := replace(output, chr(12), '_x000C_');
+    output := replace(output, chr(14), '_x000E_');
+    output := replace(output, chr(15), '_x000F_');
+    output := replace(output, chr(16), '_x0010_');
+    output := replace(output, chr(17), '_x0011_');
+    output := replace(output, chr(18), '_x0012_');
+    output := replace(output, chr(19), '_x0013_');
+    output := replace(output, chr(20), '_x0014_');
+    output := replace(output, chr(21), '_x0015_');
+    output := replace(output, chr(22), '_x0016_');
+    output := replace(output, chr(23), '_x0017_');
+    output := replace(output, chr(24), '_x0018_');
+    output := replace(output, chr(25), '_x0019_');
+    output := replace(output, chr(26), '_x001A_');
+    output := replace(output, chr(27), '_x001B_');
+    output := replace(output, chr(28), '_x001C_');
+    output := replace(output, chr(29), '_x001D_');
+    output := replace(output, chr(30), '_x001E_');
+    output := replace(output, chr(31), '_x001F_');
+    return output;
   end;
 
   function int2raw (int32 in binary_integer, sz in pls_integer default null) return raw
@@ -1080,7 +1127,7 @@ create or replace package body ExcelGen is
     while available > 0 loop
       amt := least(amt, available);
       dbms_lob.read(input, amt, pos, buf);
-      stream_write(stream, buf, escape_xml);
+      stream_write(stream, case when escape_xml then stripXmlControlChars(buf) else buf end, escape_xml);
       pos := pos + amt;
       available := available - amt;  
     end loop;    
@@ -1752,7 +1799,7 @@ create or replace package body ExcelGen is
           when dbms_sql.VARCHAR2_TYPE then
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.varchar2_value);
             if data.varchar2_value is not null then
-              sst_idx := put_string(ctx, data.varchar2_value);
+              sst_idx := put_string(ctx, stripXmlControlChars(data.varchar2_value));
               stream_write(stream, '<c r="'||cellRef||'" t="s"><v>'||to_char(sst_idx - 1)||'</v></c>');
             end if;
             
@@ -1760,13 +1807,13 @@ create or replace package body ExcelGen is
             dbms_sql.column_value_char(sd.sqlMetadata.cursorNumber, i, data.char_value);
             if data.char_value is not null then
               data.varchar2_value := rtrim(data.char_value);
-              sst_idx := put_string(ctx, data.varchar2_value);
+              sst_idx := put_string(ctx, stripXmlControlChars(data.varchar2_value));
               stream_write(stream, '<c r="'||cellRef||'" t="s"><v>'||to_char(sst_idx - 1)||'</v></c>');
             end if;
             
           when dbms_sql.NUMBER_TYPE then
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.number_value);
-            if sd.sqlMetadata.columnList(i).scale <= 0 then
+            if sd.sqlMetadata.columnList(i).scale between -84 and 0 then
               data.varchar2_value := to_char(data.number_value);
             else
               data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
@@ -1797,7 +1844,7 @@ create or replace package body ExcelGen is
               -- try conversion to VARCHAR2
               begin
                 data.varchar2_value := to_char(data.clob_value);
-                sst_idx := put_string(ctx, data.varchar2_value);
+                sst_idx := put_string(ctx, stripXmlControlChars(data.varchar2_value));
                 stream_write(stream, '<c r="'||cellRef||'" t="s"><v>'||to_char(sst_idx - 1)||'</v></c>');
               exception
                 when value_error then

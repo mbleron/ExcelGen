@@ -34,6 +34,8 @@ create or replace package ExcelGen is
     Marc Bleron       2021-05-13     Added XLSB support
     Lee Lindley       2021-07-25     Added setNumFormat
     Marc Bleron       2021-08-22     Added setColumnFormat and setXXXFormat overloads
+    Marc Bleron       2021-09-15     Fixed serialization for plain NUMBER values
+                                     Fixed invalid control characters in string values
 ====================================================================================== */
 
   -- file types
