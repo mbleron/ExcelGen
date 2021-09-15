@@ -918,6 +918,11 @@ end;
 
 ## CHANGELOG
 
+### 2.2.1 (2021-09-15)
+
+* Fix : issue #11
+* Fix : issue #12
+
 ### 2.2 (2021-08-23)
 
 * Added setColumnFormat procedure
