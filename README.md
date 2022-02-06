@@ -581,6 +581,7 @@ function makeFont (
 , p_b      in boolean default false
 , p_i      in boolean default false
 , p_color  in varchar2 default null
+, p_u      in varchar2 default null
 )
 return CT_Font;
 ```
@@ -592,6 +593,7 @@ Parameter|Description|Mandatory
 `p_b`|Bold font style (true\|false).|No
 `p_i`|Italic font style (true\|false).|No
 `p_color`|Font [color](#color-specification).|No
+`p_u`|Underline style. <br/>One of `none`, `single`, `double`, `singleAccounting`, `doubleAccounting`. Default is `none`.|No
 
 ---
 ### makePatternFill function
@@ -623,6 +625,7 @@ This function builds an instance of a cell alignment.
 function makeAlignment (
   p_horizontal  in varchar2 default null
 , p_vertical    in varchar2 default null
+, p_wrapText    in boolean default false
 )
 return CT_CellAlignment;
 ```
@@ -631,6 +634,7 @@ Parameter|Description|Mandatory
 ---|---|---
 `p_horizontal`|Horizontal alignment type, one of `left`, `center` or `right`.|No
 `p_vertical`|Vertical alignment type, one of `top`, `center` or `bottom`.|No
+`p_wrapText`|Cell text wrapping. Default is `false`.|No
 
 ---
 ### makeCellStyle function
@@ -918,6 +922,11 @@ end;
 
 ## CHANGELOG
 
+### 2.3 (2022-02-06)
+
+* Enhancement : issue #9
+* Fix : issue #15
+
 ### 2.2.1 (2021-09-15)
 
 * Fix : issue #11
@@ -947,4 +956,4 @@ end;
 
 ## Copyright and license
 
-Copyright 2020-2021 Marc Bleron. Released under MIT license.
+Copyright 2020-2022 Marc Bleron. Released under MIT license.

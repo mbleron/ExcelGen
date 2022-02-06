@@ -3,7 +3,7 @@ create or replace package ExcelGen is
 
   MIT License
 
-  Copyright (c) 2020-2021 Marc Bleron
+  Copyright (c) 2020-2022 Marc Bleron
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -36,6 +36,8 @@ create or replace package ExcelGen is
     Marc Bleron       2021-08-22     Added setColumnFormat and setXXXFormat overloads
     Marc Bleron       2021-09-15     Fixed serialization for plain NUMBER values
                                      Fixed invalid control characters in string values
+    Marc Bleron       2021-09-04     Added wrapText attribute
+    Marc Bleron       2022-02-06     Fixed table format issue for empty dataset
 ====================================================================================== */
 
   -- file types
@@ -49,46 +51,6 @@ create or replace package ExcelGen is
   OFFICE2013      constant pls_integer := 3;
   OFFICE2016      constant pls_integer := 4;
   
-  /*
-  type CT_BorderPr is record (
-    style  varchar2(16)
-  , color  varchar2(8)
-  );
-  
-  type CT_Border is record (
-    left     CT_BorderPr
-  , right    CT_BorderPr
-  , top      CT_BorderPr
-  , bottom   CT_BorderPr
-  , content  varchar2(32767)
-  );
-  
-  type CT_Font is record (
-    name     varchar2(64)
-  , b        boolean := false
-  , i        boolean := false
-  , color    varchar2(8)
-  , sz       pls_integer
-  , content  varchar2(32767)
-  );
-
-  type CT_PatternFill is record (
-    patternType  varchar2(32)
-  , fgColor      varchar2(8)
-  , bgColor      varchar2(8)
-  );
-
-  type CT_Fill is record (
-    patternFill  CT_PatternFill
-  , content      varchar2(32767)
-  );
-  
-  type CT_CellAlignment is record (
-    horizontal  varchar2(16)
-  , vertical    varchar2(16)
-  , content     varchar2(32767)
-  );
-  */
   subtype CT_BorderPr is ExcelTypes.CT_BorderPr;
   subtype CT_Border is ExcelTypes.CT_Border;
   subtype CT_Font is ExcelTypes.CT_Font;
@@ -139,6 +101,7 @@ create or replace package ExcelGen is
   , p_b      in boolean default false
   , p_i      in boolean default false
   , p_color  in varchar2 default null
+  , p_u      in varchar2 default null
   )
   return CT_Font;
 
@@ -152,6 +115,7 @@ create or replace package ExcelGen is
   function makeAlignment (
     p_horizontal  in varchar2 default null
   , p_vertical    in varchar2 default null
+  , p_wrapText    in boolean default false
   )
   return CT_CellAlignment;
   
@@ -182,6 +146,7 @@ create or replace package ExcelGen is
   , p_paginate    in boolean default false
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
+  , p_excludeCols in varchar2 default null
   );
   
   function addSheetFromQuery (
@@ -192,6 +157,7 @@ create or replace package ExcelGen is
   , p_paginate    in boolean default false
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
+  , p_excludeCols in varchar2 default null
   )
   return sheetHandle;
 
@@ -203,6 +169,7 @@ create or replace package ExcelGen is
   , p_paginate    in boolean default false
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
+  , p_excludeCols in varchar2 default null
   );
 
   function addSheetFromCursor (
@@ -213,6 +180,7 @@ create or replace package ExcelGen is
   , p_paginate    in boolean default false
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
+  , p_excludeCols in varchar2 default null
   )
   return sheetHandle;
 
@@ -330,6 +298,15 @@ create or replace package ExcelGen is
   , p_columnId  in pls_integer
   , p_format    in varchar2
   );
+
+  /*
+  procedure setColumnHlink (
+    p_ctxId     in ctxHandle
+  , p_sheetId   in sheetHandle
+  , p_columnId  in pls_integer
+  , p_target    in varchar2 default null
+  );
+  */
 
   procedure setEncryption (
     p_ctxId       in ctxHandle
