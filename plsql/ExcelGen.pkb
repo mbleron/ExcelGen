@@ -3477,6 +3477,7 @@ create or replace package body ExcelGen is
     setBindVariableImpl(p_ctxId, p_sheetId, p_bindName, anydata.ConvertDate(p_bindValue));
   end;
   
+$if NOT $$no_crypto OR $$no_crypto IS NULL $then
   procedure setEncryption (
     p_ctxId       in ctxHandle
   , p_password    in varchar2
@@ -3515,6 +3516,7 @@ create or replace package body ExcelGen is
     ctx_cache(p_ctxId).encryptionInfo := encInfo;
       
   end;
+$end
 
   function getFileContent (
     p_ctxId  in ctxHandle
@@ -3550,6 +3552,7 @@ create or replace package body ExcelGen is
     createPackage(ctx.pck);  
     debug('end create package');
     
+$if NOT $$no_crypto OR $$no_crypto IS NULL $then
     if ctx.encryptionInfo.version is not null then
       output := xutl_offcrypto.encrypt_package(
                   p_package  => ctx.pck.content
@@ -3560,8 +3563,11 @@ create or replace package body ExcelGen is
                 );
       dbms_lob.freetemporary(ctx.pck.content);
     else    
+$end
       output := ctx.pck.content;
+$if NOT $$no_crypto OR $$no_crypto IS NULL $then
     end if;
+$end
     
     return output;
     
