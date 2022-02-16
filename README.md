@@ -50,11 +50,12 @@ Using SQL*Plus, connect to the target database schema, then :
 Basic Excel export from a SQL query :  
 ```
 declare
-  ctxId  ExcelGen.ctxHandle;
+  ctxId   ExcelGen.ctxHandle;
+  sheet1  ExcelGen.sheetHandle;
 begin
   ctxId := ExcelGen.createContext();  
-  ExcelGen.addSheetFromQuery(ctxId, 'sheet1', 'select * from my_table');
-  ExcelGen.setHeader(ctxId, 'sheet1', p_frozen => true);
+  sheet1 := ExcelGen.addSheetFromQuery(ctxId, 'sheet1', 'select * from my_table');
+  ExcelGen.setHeader(ctxId, sheet1, p_frozen => true);
   ExcelGen.createFile(ctxId, 'TEST_DIR', 'my_file.xlsx');
   ExcelGen.closeContext(ctxId);
 end;
@@ -275,7 +276,7 @@ Parameter|Description|Mandatory
 ---  
 ### setHeader procedure
 This procedure adds a header row to a given sheet.  
-Column names are derived from the SQL source query.  
+By default, column names are derived from the SQL source query, but they can be customized individually using [setColumnFormat](#setcolumnformat-procedure) procedure.  
 
 ```sql
 procedure setHeader (
@@ -418,17 +419,16 @@ Parameter|Description|Mandatory
 
 ---
 ### setColumnFormat procedure
-This procedure sets the format applied to values in a given column of a sheet.  
-It takes precedence over existing workbook or sheet-level settings for NUMBER, DATE or TIMESTAMP data types.  
-
-The format must follow MS Excel proprietary [syntax](https://support.microsoft.com/en-us/office/create-a-custom-number-format-78f2a361-936b-4c03-8772-09fab54be7f4).  
+This procedure sets custom column-level properties:  number/date format, column header, column width.  
 
 ```sql
 procedure setColumnFormat (
   p_ctxId     in ctxHandle
 , p_sheetId   in sheetHandle
 , p_columnId  in pls_integer
-, p_format    in varchar2
+, p_format    in varchar2 default null
+, p_header    in varchar2 default null
+, p_width     in number default null
 );
 ```
 
@@ -437,7 +437,9 @@ Parameter|Description|Mandatory
 `p_ctxId`|Context handle.|Yes
 `p_sheetId`|Sheet handle.|Yes
 `p_columnId`|Column id (1-based index).|Yes
-`p_format`|Format string.|Yes
+`p_format`|Format string. <br/>It takes precedence over existing workbook or sheet-level settings for NUMBER, DATE or TIMESTAMP data types. <br/>The format must follow MS Excel proprietary [syntax](https://support.microsoft.com/en-us/office/create-a-custom-number-format-78f2a361-936b-4c03-8772-09fab54be7f4).  |No
+`p_header`|Column header. Takes precedence over the column name from the source SQL query.|No
+`p_width`|Column width. <br/>From [ECMA-376 Standard Part 1](https://www.ecma-international.org/publications-and-standards/standards/ecma-376/) (§ 18.3.1.13): _measured as the number of characters of the maximum digit width of the numbers 0, 1, 2, …, 9 as rendered in the normal style's font_ (currently "Calibri 11pt").|No
 
 ---
 ### setEncryption procedure
@@ -921,6 +923,10 @@ end;
 
 
 ## CHANGELOG
+
+### 2.4 (2022-02-16)
+
+* Enhancement : issue #7
 
 ### 2.3 (2022-02-06)
 
