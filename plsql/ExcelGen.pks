@@ -38,6 +38,7 @@ create or replace package ExcelGen is
                                      Fixed invalid control characters in string values
     Marc Bleron       2021-09-04     Added wrapText attribute
     Marc Bleron       2022-02-06     Fixed table format issue for empty dataset
+    Marc Bleron       2022-02-15     Added custom column header and width
 ====================================================================================== */
 
   -- file types
@@ -296,7 +297,9 @@ create or replace package ExcelGen is
     p_ctxId     in ctxHandle
   , p_sheetId   in sheetHandle
   , p_columnId  in pls_integer
-  , p_format    in varchar2
+  , p_format    in varchar2 default null
+  , p_header    in varchar2 default null
+  , p_width     in number default null
   );
 
   /*

@@ -124,6 +124,7 @@ create or replace package body ExcelGen is
     
   type column_list_t is table of column_t;
   type column_map_t is table of pls_integer index by varchar2(128);
+  type column_set_t is table of varchar2(3) index by pls_integer;
 
   type string_map_t is table of pls_integer index by varchar2(32767);
   type string_list_t is table of varchar2(32767);
@@ -276,16 +277,17 @@ create or replace package body ExcelGen is
   type bind_variable_list_t is table of bind_variable_t;
   
   type sql_metadata_t is record (
-    queryString      varchar2(32767)
-  , cursorNumber     integer
-  , bindVariables    bind_variable_list_t
-  , columnList       column_list_t
-  , columnMap        column_map_t
-  , excludeSet       int_set_t
-  , partitionBySize  boolean := false
-  , partitionSize    pls_integer
-  , partitionId      pls_integer
-  , r_num            pls_integer
+    queryString       varchar2(32767)
+  , cursorNumber      integer
+  , bindVariables     bind_variable_list_t
+  , columnList        column_list_t
+  , columnMap         column_map_t
+  , visibleColumnSet  column_set_t
+  , excludeSet        int_set_t
+  , partitionBySize   boolean := false
+  , partitionSize     pls_integer
+  , partitionId       pls_integer
+  , r_num             pls_integer
   );
   
   type sheet_header_t is record (
@@ -295,7 +297,14 @@ create or replace package body ExcelGen is
   , autoFilter  boolean
   );
   
-  type column_fmt_map_t is table of varchar2(128) index by pls_integer;
+  type sheet_column_t is record (
+    header  varchar2(1024)
+  , fmt     varchar2(128)
+  , width   number
+  );
+  
+  type sheet_column_map_t is table of sheet_column_t index by pls_integer;
+  --type column_fmt_map_t is table of varchar2(128) index by pls_integer;
   
   type sheet_definition_t is record (
     sheetName      varchar2(128)
@@ -306,7 +315,8 @@ create or replace package body ExcelGen is
   , tableStyle     varchar2(32)
   , sqlMetadata    sql_metadata_t
   , defaultFmts    defaultFmts_t
-  , columnFmtMap   column_fmt_map_t
+  --, columnFmtMap   column_fmt_map_t
+  , columnMap      sheet_column_map_t
   , columnLinkMap  link_map_t
   );
   
@@ -328,9 +338,6 @@ create or replace package body ExcelGen is
   , pck                  package_t
   , sheetDefinitionMap   sheet_definition_map_t
   , sheetIndexMap        CT_SheetMap
-  --, defaultDateFmt       varchar2(128)
-  --, defaultTimestampFmt  varchar2(128)
-  --, defaultNumFmt        varchar2(128)
   , defaultFmts          defaultFmts_t
   , encryptionInfo       encryption_info_t
   , fileType             pls_integer
@@ -1156,6 +1163,21 @@ create or replace package body ExcelGen is
     return putCellXf(ctx_cache(p_ctxId).workbook.styles, xf);        
   end;
 
+  function getColumnWidth (
+    displayWidth in number 
+  )
+  return binary_double
+  is
+  begin
+    return to_binary_double(
+             trunc(
+               round(displayWidth * 7 + 5) -- must be an integer number of pixels
+               / 7 
+               * 256
+             ) / 256
+           );
+  end;
+
   procedure parseLink (
     link  in out nocopy link_t
   )
@@ -1552,6 +1574,9 @@ create or replace package body ExcelGen is
     
     for i in 1 .. meta.columnList.count loop
       meta.columnMap(meta.columnList(i).name) := i;
+      if not meta.columnList(i).excluded then
+        meta.visibleColumnSet(i) := meta.columnList(i).colRef;
+      end if;
     end loop;
     
   end;
@@ -1750,7 +1775,8 @@ create or replace package body ExcelGen is
   , showHeader       in boolean
   , tableAutoFilter  in boolean
   , tableStyleName   in varchar2
-  , columnList       in column_list_t
+  --, columnList       in column_list_t
+  , columnMap        in sheet_column_map_t
   , tableName        in varchar2 default null
   , isEmpty          in boolean default false
   )
@@ -1773,11 +1799,19 @@ create or replace package body ExcelGen is
     tab.partName := 'xl/tables/table'||to_char(tab.id)
                                      ||case when ctx.fileType = FILE_XLSB then '.bin' else '.xml' end;
     tab.cols := CT_TableColumns();
+    /*
     tab.cols.extend(columnList.count);
     for i in 1 .. columnList.count loop
       tab.cols(i).id := i;
       tab.cols(i).name := columnList(i).name;
     end loop;
+    */
+    tab.cols.extend(columnMap.count);
+    for i in 1 .. columnMap.count loop
+      tab.cols(i).id := i;
+      tab.cols(i).name := columnMap(i).header;
+    end loop;
+    
     ctx.workbook.tables(tab.id) := tab;
     return tab.id;
   end;
@@ -2101,6 +2135,9 @@ create or replace package body ExcelGen is
     sst_idx         pls_integer;
     stream          stream_t;
     
+    columnId        pls_integer;
+    columnHeader    varchar2(256);
+    
     cellXfId        pls_integer;
     cellHasLink     boolean;
 
@@ -2144,6 +2181,17 @@ create or replace package body ExcelGen is
         stream_write(stream, '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>');
       end if;
       
+      -- columns
+      if sd.columnMap.count != 0 then
+        stream_write(stream, '<cols>');
+        for i in 1 .. sd.columnMap.count loop
+          if sd.columnMap(i).width is not null then
+            stream_write(stream, '<col min="'||to_char(i)||'" max="'||to_char(i)||'" width="'||to_char(getColumnWidth(sd.columnMap(i).width),'TM9')||'" customWidth="1"/>');
+          end if;
+        end loop;
+        stream_write(stream, '</cols>');
+      end if;
+      
       stream_write(stream, '<sheetData>');
       
       -- header row
@@ -2152,7 +2200,10 @@ create or replace package body ExcelGen is
         stream_write(stream, '<row r="'||to_char(rowIdx)||'">');
         for i in 1 .. sd.sqlMetadata.columnList.count loop
           if not sd.sqlMetadata.columnList(i).excluded then
-            sst_idx := put_string(ctx, sd.sqlMetadata.columnList(i).name);
+            columnId := sd.sqlMetadata.columnList(i).id;
+            columnHeader := sd.columnMap(columnId).header;
+            sst_idx := put_string(ctx, columnHeader);
+            
             cellRef := sd.sqlMetadata.columnList(i).colRef||to_char(rowIdx);
             stream_write(stream, '<c r="'||cellRef||'" t="s"'||
                                  case when sd.header.xfId is not null then ' s="'||to_char(sd.header.xfId)||'"' end || 
@@ -2306,7 +2357,10 @@ create or replace package body ExcelGen is
                
       stream_write(stream, '</sheetData>');
       
-      sheetRange := makeRange(sd.sqlMetadata.columnList(1).colRef, 1, sd.sqlMetadata.columnList(sd.sqlMetadata.columnList.last).colRef, rowIdx);
+      sheetRange := makeRange(sd.sqlMetadata.columnList(sd.sqlMetadata.visibleColumnSet.first).colRef
+                            , 1
+                            , sd.sqlMetadata.columnList(sd.sqlMetadata.visibleColumnSet.last).colRef
+                            , rowIdx);
       
       -- autoFilter
       if sd.header.show and sd.header.autoFilter then
@@ -2351,7 +2405,7 @@ create or replace package body ExcelGen is
       part.rels := CT_Relationships();
       
       if sd.formatAsTable then
-        tableId := addTable(ctx, sheetRange, sd.header.show, sd.header.autoFilter, sd.tableStyle, sd.sqlMetadata.columnList, null, isEmpty);
+        tableId := addTable(ctx, sheetRange, sd.header.show, sd.header.autoFilter, sd.tableStyle, sd.columnMap, null, isEmpty);
         sheet.tableParts.extend;
         sheet.tableParts(sheet.tableParts.last) := tableId;
         
@@ -2399,6 +2453,9 @@ create or replace package body ExcelGen is
     sst_idx         pls_integer;
     stream          xutl_xlsb.Stream_T;
     
+    columnId        pls_integer;
+    columnHeader    varchar2(256);
+    
     cellXfId        pls_integer;
 
     sheetRange      range_t;
@@ -2442,6 +2499,16 @@ create or replace package body ExcelGen is
         xutl_xlsb.put_simple_record(stream, 134);  -- BrtEndWsViews
       end if;
 
+      -- columns
+      if sd.columnMap.count != 0 then
+        xutl_xlsb.put_simple_record(stream, 390);  -- BrtBeginColInfos
+        for i in 1 .. sd.columnMap.count loop
+          if sd.columnMap(i).width is not null then
+            xutl_xlsb.put_ColInfo(stream, i - 1, getColumnWidth(sd.columnMap(i).width) * 256);
+          end if;
+        end loop;
+        xutl_xlsb.put_simple_record(stream, 391);  -- BrtEndColInfos
+      end if;
       
       xutl_xlsb.put_simple_record(stream, 145);  -- BrtBeginSheetData
       
@@ -2450,12 +2517,16 @@ create or replace package body ExcelGen is
         rowIdx := rowIdx + 1;
         xutl_xlsb.put_RowHdr(stream, rowIdx - 1);
         for i in 1 .. sd.sqlMetadata.columnList.count loop
-          sst_idx := put_string(ctx, sd.sqlMetadata.columnList(i).name);
-          xutl_xlsb.put_CellIsst(stream
-                               , colIndex => i - 1
-                               , styleRef => nvl(sd.header.xfId, 0)
-                               , isst     => sst_idx - 1
-                               );
+          if not sd.sqlMetadata.columnList(i).excluded then
+            columnId := sd.sqlMetadata.columnList(i).id;
+            columnHeader := sd.columnMap(columnId).header;
+            sst_idx := put_string(ctx, columnHeader);
+            xutl_xlsb.put_CellIsst(stream
+                                 , colIndex => i - 1
+                                 , styleRef => nvl(sd.header.xfId, 0)
+                                 , isst     => sst_idx - 1
+                                 );
+          end if;
         end loop;
       end if;
       
@@ -2546,7 +2617,10 @@ create or replace package body ExcelGen is
       
       xutl_xlsb.put_simple_record(stream, 146);  -- BrtEndSheetData
       
-      sheetRange := makeRange(sd.sqlMetadata.columnList(1).colRef, 1, sd.sqlMetadata.columnList(sd.sqlMetadata.columnList.last).colRef, rowIdx);
+      sheetRange := makeRange(sd.sqlMetadata.columnList(sd.sqlMetadata.visibleColumnSet.first).colRef
+                            , 1
+                            , sd.sqlMetadata.columnList(sd.sqlMetadata.visibleColumnSet.last).colRef
+                            , rowIdx);
       
       -- autoFilter
       if sd.header.show and sd.header.autoFilter then
@@ -2598,7 +2672,7 @@ create or replace package body ExcelGen is
       part.rels := CT_Relationships();
       
       if sd.formatAsTable then
-        tableId := addTable(ctx, sheetRange, sd.header.show, sd.header.autoFilter, sd.tableStyle, sd.sqlMetadata.columnList, null, isEmpty);
+        tableId := addTable(ctx, sheetRange, sd.header.show, sd.header.autoFilter, sd.tableStyle, sd.columnMap, null, isEmpty);
         sheet.tableParts.extend;
         sheet.tableParts(sheet.tableParts.last) := tableId;
         
@@ -2642,46 +2716,52 @@ create or replace package body ExcelGen is
   )
   is
     sheetDefinition  sheet_definition_t;
-    columnFmt        varchar2(128);
+    --columnFmt        varchar2(128);
     defaultFmt       varchar2(128);
     cellXf           CT_Xf;
-    baseXfId         pls_integer;
+    baseXfId         pls_integer := 0;
     columnId         pls_integer;
+    columnName       varchar2(128);
+    sheetColumn      sheet_column_t;
   begin
     sheetDefinition := ctx.sheetDefinitionMap(sheetIndex);
     prepareCursor(sheetDefinition.sqlMetadata);
     
     -- set column-level information
     for i in 1 .. sheetDefinition.sqlMetadata.columnList.count loop
-      -- format
-      columnFmt := null;
-      if sheetDefinition.columnFmtMap.exists(i) then
-        columnFmt := sheetDefinition.columnFmtMap(i);
+      
+      if not sheetDefinition.sqlMetadata.columnList(i).excluded then
+        
+        columnId := sheetDefinition.sqlMetadata.columnList(i).id; -- visible column ID
+        columnName := sheetDefinition.sqlMetadata.columnList(i).name;
+        sheetColumn := null;
+        
+        if sheetDefinition.columnMap.exists(columnId) then
+          sheetColumn := sheetDefinition.columnMap(columnId);
+        end if;
+        
+        if sheetColumn.header is null then
+          sheetColumn.header := columnName;
+          sheetDefinition.columnMap(columnId) := sheetColumn;
+        end if;
+        
+        defaultFmt := case sheetDefinition.sqlMetadata.columnList(i).type
+                      when dbms_sql.NUMBER_TYPE then coalesce(sheetDefinition.defaultFmts.numFmt, ctx.defaultFmts.numFmt, DEFAULT_NUM_FMT)
+                      when dbms_sql.DATE_TYPE then coalesce(sheetDefinition.defaultFmts.dateFmt, ctx.defaultFmts.dateFmt, DEFAULT_DATE_FMT)
+                      when dbms_sql.TIMESTAMP_TYPE then coalesce(sheetDefinition.defaultFmts.timestampFmt, ctx.defaultFmts.timestampFmt, DEFAULT_TIMESTAMP_FMT)
+                      when dbms_sql.TIMESTAMP_WITH_TZ_TYPE then coalesce(sheetDefinition.defaultFmts.timestampFmt, ctx.defaultFmts.timestampFmt, DEFAULT_TIMESTAMP_FMT)
+                      end;
+        
+        sheetColumn.fmt := nvl(sheetColumn.fmt, defaultFmt);
+        
+        if sheetDefinition.columnLinkMap.exists(columnId) then
+          baseXfId := ctx.workbook.styles.hlinkXfId;
+        end if;
+        
+        cellXf := makeCellXf(ctx.workbook.styles, baseXfId, sheetColumn.fmt);
+        sheetDefinition.sqlMetadata.columnList(i).xfId := putCellXf(ctx.workbook.styles, cellXf);
+      
       end if;
-      defaultFmt := case sheetDefinition.sqlMetadata.columnList(i).type
-                    when dbms_sql.NUMBER_TYPE then coalesce(sheetDefinition.defaultFmts.numFmt, ctx.defaultFmts.numFmt, DEFAULT_NUM_FMT)
-                    when dbms_sql.DATE_TYPE then coalesce(sheetDefinition.defaultFmts.dateFmt, ctx.defaultFmts.dateFmt, DEFAULT_DATE_FMT)
-                    when dbms_sql.TIMESTAMP_TYPE then coalesce(sheetDefinition.defaultFmts.timestampFmt, ctx.defaultFmts.timestampFmt, DEFAULT_TIMESTAMP_FMT)
-                    when dbms_sql.TIMESTAMP_WITH_TZ_TYPE then coalesce(sheetDefinition.defaultFmts.timestampFmt, ctx.defaultFmts.timestampFmt, DEFAULT_TIMESTAMP_FMT)
-                    end;
-      
-      columnFmt := nvl(columnFmt, defaultFmt);
-      
-      /*
-      -- hyperlink
-      if sheetDefinition.columnLinkMap.exists(i) then
-        sheetDefinition.sqlMetadata.columnList(i).link := prepareHyperlink(sheetDefinition.columnLinkMap(i), i, sheetDefinition.sqlMetadata.columnList);
-        sheetDefinition.sqlMetadata.columnList(i).hasLink := true;
-        baseXfId := ctx.workbook.styles.hlinkXfId;
-      else
-        baseXfId := 0; -- default normal style
-      end if;
-      */
-      
-      baseXfId := case when sheetDefinition.columnLinkMap.exists(i) then ctx.workbook.styles.hlinkXfId else 0 end;
-      
-      cellXf := makeCellXf(ctx.workbook.styles, baseXfId, columnFmt);
-      sheetDefinition.sqlMetadata.columnList(i).xfId := putCellXf(ctx.workbook.styles, cellXf);
       
     end loop;
     
@@ -3365,11 +3445,17 @@ create or replace package body ExcelGen is
     p_ctxId     in ctxHandle
   , p_sheetId   in sheetHandle
   , p_columnId  in pls_integer
-  , p_format    in varchar2
+  , p_format    in varchar2 default null
+  , p_header    in varchar2 default null
+  , p_width     in number default null
   )
   is
+    sheetColumn  sheet_column_t;
   begin
-    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).columnFmtMap(p_columnId) := p_format;
+    sheetColumn.fmt := p_format;
+    sheetColumn.header := p_header;
+    sheetColumn.width := p_width;
+    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).columnMap(p_columnId) := sheetColumn;
   end;
 
   procedure setColumnHlink (
