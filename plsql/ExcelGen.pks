@@ -311,12 +311,14 @@ create or replace package ExcelGen is
   );
   */
 
+$if NOT $$no_crypto OR $$no_crypto IS NULL $then
   procedure setEncryption (
     p_ctxId       in ctxHandle
   , p_password    in varchar2
   , p_compatible  in pls_integer default OFFICE2007SP2
   );
-  
+$end
+
   function getFileContent (
     p_ctxId  in ctxHandle
   )

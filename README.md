@@ -44,6 +44,7 @@ ExcelGen requires Oracle Database 11\.2\.0\.1 and onwards.
 
 Using SQL*Plus, connect to the target database schema, then :  
 1. Install ExcelGen and dependencies using script [`install.sql`](./install.sql).  
+2. If your schema does not have a grant to DBMS_CRYPTO, you can use script [`install_nocrypto.sql`](./install_nocrypto.sql), but will not be able to call the *setEncryption* procedure.
 
 ## Quick Start
 
@@ -923,6 +924,10 @@ end;
 
 
 ## CHANGELOG
+
+### 2.4.1 (2022-02-19)
+
+* Enhancement : issue 17
 
 ### 2.4 (2022-02-16)
 
