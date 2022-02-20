@@ -317,6 +317,7 @@ create or replace package body ExcelGen is
   , defaultFmts    defaultFmts_t
   --, columnFmtMap   column_fmt_map_t
   , columnMap      sheet_column_map_t
+  , customColWidth  boolean
   , columnLinkMap  link_map_t
   );
   
@@ -2182,7 +2183,7 @@ create or replace package body ExcelGen is
       end if;
       
       -- columns
-      if sd.columnMap.count != 0 then
+      if sd.customColWidth and sd.columnMap.count != 0 then
         stream_write(stream, '<cols>');
         for i in 1 .. sd.columnMap.count loop
           if sd.columnMap(i).width is not null then
@@ -2500,7 +2501,7 @@ create or replace package body ExcelGen is
       end if;
 
       -- columns
-      if sd.columnMap.count != 0 then
+      if sd.customColWidth and sd.columnMap.count != 0 then
         xutl_xlsb.put_simple_record(stream, 390);  -- BrtBeginColInfos
         for i in 1 .. sd.columnMap.count loop
           if sd.columnMap(i).width is not null then
@@ -3454,7 +3455,10 @@ create or replace package body ExcelGen is
   begin
     sheetColumn.fmt := p_format;
     sheetColumn.header := p_header;
-    sheetColumn.width := p_width;
+    if p_width is not null then
+      sheetColumn.width := p_width;
+      ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).customColWidth := true;
+    end if;
     ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).columnMap(p_columnId) := sheetColumn;
   end;
 

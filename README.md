@@ -925,9 +925,13 @@ end;
 
 ## CHANGELOG
 
+### 2.4.2 (2022-02-20)
+
+* Fix : issue #18
+
 ### 2.4.1 (2022-02-19)
 
-* Enhancement : issue 17
+* Enhancement : issue #17
 
 ### 2.4 (2022-02-16)
 
