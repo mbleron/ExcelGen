@@ -72,6 +72,7 @@ create or replace package body ExcelGen is
   ST_STRING              constant pls_integer := 1;
   ST_DATETIME            constant pls_integer := 2;
   ST_LOB                 constant pls_integer := 3;
+  ST_BINARY_DOUBLE       constant pls_integer := 4;
 
   buffer_too_small       exception;
   pragma exception_init (buffer_too_small, -19011);
@@ -85,13 +86,14 @@ create or replace package body ExcelGen is
   );
 
   type data_t is record (
-    varchar2_value  varchar2(32767)
-  , char_value      char(32767)
-  , number_value    number
-  , date_value      date
-  , ts_value        timestamp
-  , tstz_value      timestamp with time zone
-  , clob_value      clob
+    varchar2_value      varchar2(32767)
+  , char_value          char(32767)
+  , number_value        number
+  , date_value          date
+  , ts_value            timestamp
+  , tstz_value          timestamp with time zone
+  , clob_value          clob
+  , binary_double_value binary_double
   );
   
   type data_map_t is table of data_t index by pls_integer;
@@ -1512,6 +1514,9 @@ create or replace package body ExcelGen is
       when dbms_sql.CLOB_TYPE then
         dbms_sql.define_column(p_cursor_number, i, data.clob_value);
         columnItem.supertype := ST_LOB;
+      when dbms_sql.BINARY_DOUBLE_TYPE then
+        dbms_sql.define_column(p_cursor_number, i, data.binary_double_value);
+        columnItem.supertype := ST_BINARY_DOUBLE;
       else
         error('Unsupported data type: %d, for column "%s"', baseColumnList(i).col_type, baseColumnList(i).col_name);
       end case;
@@ -1579,7 +1584,10 @@ create or replace package body ExcelGen is
         meta.visibleColumnSet(i) := meta.columnList(i).colRef;
       end if;
     end loop;
-    
+  exception when others then
+    debug('cursorNumber: '||to_char(meta.cursorNumber));
+    debug('queryString: '||meta.queryString);
+    raise;
   end;
 
   function getRelativePath (
@@ -2265,6 +2273,10 @@ create or replace package body ExcelGen is
             
           when dbms_sql.CLOB_TYPE then      
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.clob_value);
+          
+          when dbms_sql.BINARY_DOUBLE_TYPE then
+            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.binary_double_value);
+            data.varchar2_value := to_char(data.binary_double_value);
             
           end case;
           
@@ -2298,6 +2310,15 @@ create or replace package body ExcelGen is
               end if;
               
             when ST_NUMBER then
+              if not cellHasLink then
+                stream_write(stream, '<c r="'||cellRef
+                    ||case when cellXfId != 0 then '" s="'||to_char(cellXfId) end
+                    ||'"><v>'||data.varchar2_value||'</v></c>');
+              else
+                stream_write(stream, makeHyperlinkCellContent(i, data.varchar2_value));
+              end if;
+
+            when ST_BINARY_DOUBLE then
               if not cellHasLink then
                 stream_write(stream, '<c r="'||cellRef
                     ||case when cellXfId != 0 then '" s="'||to_char(cellXfId) end
@@ -2440,6 +2461,8 @@ create or replace package body ExcelGen is
       dbms_sql.close_cursor(sd.sqlMetadata.cursorNumber);
     end if;
 
+    debug( 'data rows written to sheet: '||to_char(rowIdx - case when sd.header.show then 1 else 0 end) );
+
   end;
 
   procedure createWorksheetBinImpl (
@@ -2563,6 +2586,10 @@ create or replace package body ExcelGen is
           when dbms_sql.NUMBER_TYPE then
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.number_value);
             xutl_xlsb.put_CellNumber(stream, i-1, cellXfId, data.number_value);
+            
+          when dbms_sql.BINARY_DOUBLE_TYPE then
+            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.binary_double_value);
+            xutl_xlsb.put_CellNumber( stream, i-1, cellXfId, to_number(data.binary_double_value) );
             
           when dbms_sql.DATE_TYPE then
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.date_value);
@@ -2709,6 +2736,8 @@ create or replace package body ExcelGen is
       dbms_sql.close_cursor(sd.sqlMetadata.cursorNumber);
     end if;
 
+    debug( 'data rows written to sheet: '||to_char(rowIdx - case when sd.header.show then 1 else 0 end) );
+
   end;
 
   procedure createWorksheet (
@@ -2725,6 +2754,7 @@ create or replace package body ExcelGen is
     columnName       varchar2(128);
     sheetColumn      sheet_column_t;
   begin
+    debug('CreateWorksheet index: '||to_char(sheetIndex));
     sheetDefinition := ctx.sheetDefinitionMap(sheetIndex);
     prepareCursor(sheetDefinition.sqlMetadata);
     
@@ -2777,6 +2807,7 @@ create or replace package body ExcelGen is
         createWorksheetBinImpl(ctx, sheetDefinition);
       end case;
     end loop;
+    debug('End CreateWorksheet index: '||to_char(sheetIndex));
 
   end;
   
@@ -3255,6 +3286,9 @@ create or replace package body ExcelGen is
     ctx_cache(p_ctxId).sheetIndexMap(sd.sheetName) := sd.sheetIndex;
     
     return sd.sheetIndex;
+  exception when others then
+    debug('exception for sheetIndex: '||p_sheetIndex);
+    raise;
   end;
   
   procedure addSheetFromQuery (
