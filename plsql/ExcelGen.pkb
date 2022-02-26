@@ -85,13 +85,13 @@ create or replace package body ExcelGen is
   );
 
   type data_t is record (
-    varchar2_value      varchar2(32767)
-  , char_value          char(32767)
-  , number_value        number
-  , date_value          date
-  , ts_value            timestamp
-  , tstz_value          timestamp with time zone
-  , clob_value          clob
+    varchar2_value  varchar2(32767)
+  , char_value      char(32767)
+  , number_value    number
+  , date_value      date
+  , ts_value        timestamp
+  , tstz_value      timestamp with time zone
+  , clob_value      clob
   );
   
   type data_map_t is table of data_t index by pls_integer;
@@ -1582,6 +1582,7 @@ create or replace package body ExcelGen is
         meta.visibleColumnSet(i) := meta.columnList(i).colRef;
       end if;
     end loop;
+
   end;
 
   function getRelativePath (
