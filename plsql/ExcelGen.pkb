@@ -72,7 +72,6 @@ create or replace package body ExcelGen is
   ST_STRING              constant pls_integer := 1;
   ST_DATETIME            constant pls_integer := 2;
   ST_LOB                 constant pls_integer := 3;
-  ST_BINARY_DOUBLE       constant pls_integer := 4;
 
   buffer_too_small       exception;
   pragma exception_init (buffer_too_small, -19011);
@@ -93,7 +92,6 @@ create or replace package body ExcelGen is
   , ts_value            timestamp
   , tstz_value          timestamp with time zone
   , clob_value          clob
-  , binary_double_value binary_double
   );
   
   type data_map_t is table of data_t index by pls_integer;
@@ -1515,8 +1513,8 @@ create or replace package body ExcelGen is
         dbms_sql.define_column(p_cursor_number, i, data.clob_value);
         columnItem.supertype := ST_LOB;
       when dbms_sql.BINARY_DOUBLE_TYPE then
-        dbms_sql.define_column(p_cursor_number, i, data.binary_double_value);
-        columnItem.supertype := ST_BINARY_DOUBLE;
+        dbms_sql.define_column(p_cursor_number, i, data.number_value);
+        columnItem.supertype := ST_NUMBER;
       else
         error('Unsupported data type: %d, for column "%s"', baseColumnList(i).col_type, baseColumnList(i).col_name);
       end case;
@@ -1584,10 +1582,6 @@ create or replace package body ExcelGen is
         meta.visibleColumnSet(i) := meta.columnList(i).colRef;
       end if;
     end loop;
-  exception when others then
-    debug('cursorNumber: '||to_char(meta.cursorNumber));
-    debug('queryString: '||meta.queryString);
-    raise;
   end;
 
   function getRelativePath (
@@ -2275,8 +2269,8 @@ create or replace package body ExcelGen is
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.clob_value);
           
           when dbms_sql.BINARY_DOUBLE_TYPE then
-            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.binary_double_value);
-            data.varchar2_value := to_char(data.binary_double_value);
+            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.number_value);
+            data.varchar2_value := to_char(data.number_value);
             
           end case;
           
@@ -2318,15 +2312,6 @@ create or replace package body ExcelGen is
                 stream_write(stream, makeHyperlinkCellContent(i, data.varchar2_value));
               end if;
 
-            when ST_BINARY_DOUBLE then
-              if not cellHasLink then
-                stream_write(stream, '<c r="'||cellRef
-                    ||case when cellXfId != 0 then '" s="'||to_char(cellXfId) end
-                    ||'"><v>'||data.varchar2_value||'</v></c>');
-              else
-                stream_write(stream, makeHyperlinkCellContent(i, data.varchar2_value));
-              end if;
-              
             when ST_DATETIME then
               if not cellHasLink then
                 stream_write(stream, '<c r="'||cellRef||'" s="'||to_char(cellXfId)||'"><v>'||data.varchar2_value||'</v></c>');
@@ -2588,8 +2573,8 @@ create or replace package body ExcelGen is
             xutl_xlsb.put_CellNumber(stream, i-1, cellXfId, data.number_value);
             
           when dbms_sql.BINARY_DOUBLE_TYPE then
-            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.binary_double_value);
-            xutl_xlsb.put_CellNumber( stream, i-1, cellXfId, to_number(data.binary_double_value) );
+            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.number_value);
+            xutl_xlsb.put_CellNumber(stream, i-1, cellXfId, data.number_value);
             
           when dbms_sql.DATE_TYPE then
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.date_value);
@@ -3255,6 +3240,7 @@ create or replace package body ExcelGen is
     sd        sheet_definition_t;
     local_rc  sys_refcursor := p_rc;
   begin
+    debug('sheetIndex: '||p_sheetIndex||' sheetName: '||p_sheetName);
     sd.sheetName := p_sheetName;
     sd.tabColor := validateColor(p_tabColor);
     sd.formatAsTable := false;
@@ -3286,9 +3272,6 @@ create or replace package body ExcelGen is
     ctx_cache(p_ctxId).sheetIndexMap(sd.sheetName) := sd.sheetIndex;
     
     return sd.sheetIndex;
-  exception when others then
-    debug('exception for sheetIndex: '||p_sheetIndex);
-    raise;
   end;
   
   procedure addSheetFromQuery (
