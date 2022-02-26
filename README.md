@@ -925,6 +925,11 @@ end;
 
 ## CHANGELOG
 
+### 2.4.X (2022-02-22)
+
+* add debug worksheet index number, cursor number and queryString
+* add binary_double data type
+
 ### 2.4.2 (2022-02-20)
 
 * Fix : issue #18
