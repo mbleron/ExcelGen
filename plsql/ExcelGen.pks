@@ -39,6 +39,7 @@ create or replace package ExcelGen is
     Marc Bleron       2021-09-04     Added wrapText attribute
     Marc Bleron       2022-02-06     Fixed table format issue for empty dataset
     Marc Bleron       2022-02-15     Added custom column header and width
+    Marc Bleron       2022-02-27     Added custom column style
 ====================================================================================== */
 
   -- file types
@@ -298,6 +299,15 @@ create or replace package ExcelGen is
   , p_sheetId   in sheetHandle
   , p_columnId  in pls_integer
   , p_format    in varchar2 default null
+  , p_header    in varchar2 default null
+  , p_width     in number default null
+  );
+  
+  procedure setColumnProperties (
+    p_ctxId     in ctxHandle
+  , p_sheetId   in sheetHandle
+  , p_columnId  in pls_integer
+  , p_style     in cellStyleHandle default null
   , p_header    in varchar2 default null
   , p_width     in number default null
   );

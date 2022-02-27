@@ -77,6 +77,7 @@ See the following sections for more examples and detailed description of ExcelGe
 * [setDateFormat](#setdateformat-procedure)  
 * [setTimestampFormat](#settimestampformat-procedure)  
 * [setNumFormat](#setnumformat-procedure)  
+* [setColumnProperties](#setcolumnproperties-procedure)  
 * [setColumnFormat](#setcolumnformat-procedure)  
 * [setEncryption](#setencryption-procedure)  
 * [getFileContent](#getfilecontent-function)  
@@ -419,8 +420,34 @@ Parameter|Description|Mandatory
 `p_format`|Number format string.|Yes
 
 ---
+### setColumnProperties procedure
+This procedure sets custom column-level properties:  style, column header, column width.  
+
+```sql
+procedure setColumnProperties (
+  p_ctxId     in ctxHandle
+, p_sheetId   in sheetHandle
+, p_columnId  in pls_integer
+, p_style     in cellStyleHandle default null
+, p_header    in varchar2 default null
+, p_width     in number default null
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
+`p_columnId`|Column id (1-based index).|Yes
+`p_style`|Handle to a cell style created via [makeCellStyle](#makecellstyle-function) function.|No
+`p_header`|Column header. Takes precedence over the column name from the source SQL query.|No
+`p_width`|Column width. <br/>From [ECMA-376 Standard Part 1](https://www.ecma-international.org/publications-and-standards/standards/ecma-376/) (§ 18.3.1.13): _measured as the number of characters of the maximum digit width of the numbers 0, 1, 2, …, 9 as rendered in the normal style's font_ (currently "Calibri 11pt").|No
+
+---
 ### setColumnFormat procedure
 This procedure sets custom column-level properties:  number/date format, column header, column width.  
+It is a shorthand for the following call :  
+`setColumnProperties(p_ctxId, p_sheetId, p_columnId, ExcelGen.makeCellStyle(p_ctxId, p_format), p_header, p_width)`  
 
 ```sql
 procedure setColumnFormat (

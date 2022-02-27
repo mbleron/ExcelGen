@@ -299,26 +299,25 @@ create or replace package body ExcelGen is
   
   type sheet_column_t is record (
     header  varchar2(1024)
-  , fmt     varchar2(128)
+  --, fmt     varchar2(128)
+  , xfId    pls_integer
   , width   number
   );
   
   type sheet_column_map_t is table of sheet_column_t index by pls_integer;
-  --type column_fmt_map_t is table of varchar2(128) index by pls_integer;
   
   type sheet_definition_t is record (
-    sheetName      varchar2(128)
-  , sheetIndex     pls_integer
-  , tabColor       varchar2(8)
-  , header         sheet_header_t
-  , formatAsTable  boolean
-  , tableStyle     varchar2(32)
-  , sqlMetadata    sql_metadata_t
-  , defaultFmts    defaultFmts_t
-  --, columnFmtMap   column_fmt_map_t
-  , columnMap      sheet_column_map_t
+    sheetName       varchar2(128)
+  , sheetIndex      pls_integer
+  , tabColor        varchar2(8)
+  , header          sheet_header_t
+  , formatAsTable   boolean
+  , tableStyle      varchar2(32)
+  , sqlMetadata     sql_metadata_t
+  , defaultFmts     defaultFmts_t
+  , columnMap       sheet_column_map_t
   , customColWidth  boolean
-  , columnLinkMap  link_map_t
+  , columnLinkMap   link_map_t
   );
   
   type sheet_definition_map_t is table of sheet_definition_t index by pls_integer;
@@ -1029,39 +1028,13 @@ create or replace package body ExcelGen is
     return alignment;
   end;
 
-  function makeCellXf (
-    styles      in out nocopy CT_Stylesheet
-  , styleXfId   in pls_integer
-  , numFmtCode  in varchar2 default null
-  , font        in CT_Font default null
-  , fill        in CT_Fill default null
-  , border      in CT_Border default null
-  , alignment   in CT_CellAlignment default null
+  procedure setCellXfContent (
+    xf  in out nocopy CT_Xf
   )
-  return CT_Xf
   is
-    xf  CT_Xf;
   begin
-    if styleXfId is not null then
-      xf := styles.cellStyleXfs(styleXfId);
-      xf.xfId := styleXfId;
-      xf.content := null;
-    end if;
     
-    if numFmtCode is not null then
-      xf.numFmtId := putNumfmt(styles, numFmtCode);
-    end if;
-    if font.content is not null then
-      xf.fontId := putFont(styles, font);
-    end if;
-    if fill.content is not null then
-      xf.fillId := putFill(styles, fill);
-    end if;
-    if border.content is not null then
-      xf.borderId := putBorder(styles, border);
-    end if;
-    
-    xf.alignment := alignment;
+    xf.content := null;
     
     string_write(xf.content, '<xf');
     string_write(xf.content, ' numFmtId="'||to_char(xf.numFmtId)||'"');
@@ -1093,6 +1066,44 @@ create or replace package body ExcelGen is
     else
       string_write(xf.content, '/>');
     end if;
+      
+  end;
+
+  function makeCellXf (
+    styles      in out nocopy CT_Stylesheet
+  , styleXfId   in pls_integer
+  , numFmtCode  in varchar2 default null
+  , font        in CT_Font default null
+  , fill        in CT_Fill default null
+  , border      in CT_Border default null
+  , alignment   in CT_CellAlignment default null
+  )
+  return CT_Xf
+  is
+    xf  CT_Xf;
+  begin
+    if styleXfId is not null then
+      xf := styles.cellStyleXfs(styleXfId);
+      xf.xfId := styleXfId;
+      --xf.content := null;
+    end if;
+    
+    if numFmtCode is not null then
+      xf.numFmtId := putNumfmt(styles, numFmtCode);
+    end if;
+    if font.content is not null then
+      xf.fontId := putFont(styles, font);
+    end if;
+    if fill.content is not null then
+      xf.fillId := putFill(styles, fill);
+    end if;
+    if border.content is not null then
+      xf.borderId := putBorder(styles, border);
+    end if;
+    
+    xf.alignment := alignment;
+    
+    setCellXfContent(xf);
     
     return xf;
   end;
@@ -2291,7 +2302,9 @@ create or replace package body ExcelGen is
               if data.varchar2_value is not null then
                 if not cellHasLink then
                   sst_idx := put_string(ctx, data.varchar2_value);
-                  stream_write(stream, '<c r="'||cellRef||'" t="s"><v>'||to_char(sst_idx - 1)||'</v></c>');
+                  stream_write(stream, '<c r="'||cellRef
+                      ||case when cellXfId != 0 then '" s="'||to_char(cellXfId) end
+                      ||'" t="s"><v>'||to_char(sst_idx - 1)||'</v></c>');
                 else
                   stream_write(stream, makeHyperlinkCellContent(i, escapeQuote(data.varchar2_value)));
                 end if;
@@ -2319,11 +2332,15 @@ create or replace package body ExcelGen is
                 begin
                   data.varchar2_value := to_char(data.clob_value);
                   sst_idx := put_string(ctx, stripXmlControlChars(data.varchar2_value));
-                  stream_write(stream, '<c r="'||cellRef||'" t="s"><v>'||to_char(sst_idx - 1)||'</v></c>');
+                  stream_write(stream, '<c r="'||cellRef
+                      ||case when cellXfId != 0 then '" s="'||to_char(cellXfId) end
+                      ||'" t="s"><v>'||to_char(sst_idx - 1)||'</v></c>');
                 exception
                   when value_error then
                     -- stream CLOB content as inlineStr, up to 32767 chars
-                    stream_write(stream, '<c r="'||cellRef||'" t="inlineStr"><is><t>');
+                    stream_write(stream, '<c r="'||cellRef
+                        ||case when cellXfId != 0 then '" s="'||to_char(cellXfId) end
+                        ||'" t="inlineStr"><is><t>');
                     stream_write_clob(stream, data.clob_value, 32767, true);
                     stream_write(stream, '</t></is></c>');
                 end;
@@ -2549,7 +2566,7 @@ create or replace package body ExcelGen is
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.varchar2_value);
             if data.varchar2_value is not null then
               sst_idx := put_string(ctx, data.varchar2_value);
-              xutl_xlsb.put_CellIsst(stream, i-1, 0, sst_idx-1);
+              xutl_xlsb.put_CellIsst(stream, i-1, cellXfId, sst_idx-1);
             end if;
             
           when dbms_sql.CHAR_TYPE then
@@ -2557,7 +2574,7 @@ create or replace package body ExcelGen is
             if data.char_value is not null then
               data.varchar2_value := rtrim(data.char_value);
               sst_idx := put_string(ctx, data.varchar2_value);
-              xutl_xlsb.put_CellIsst(stream, i-1, 0, sst_idx-1);
+              xutl_xlsb.put_CellIsst(stream, i-1, cellXfId, sst_idx-1);
             end if;
             
           when dbms_sql.NUMBER_TYPE then
@@ -2585,11 +2602,11 @@ create or replace package body ExcelGen is
               begin
                 data.varchar2_value := to_char(data.clob_value);
                 sst_idx := put_string(ctx, data.varchar2_value);
-                xutl_xlsb.put_CellIsst(stream, i-1, 0, sst_idx-1);
+                xutl_xlsb.put_CellIsst(stream, i-1, cellXfId, sst_idx-1);
               exception
                 when value_error then
                   -- stream CLOB content as an inline string, up to 32767 chars
-                  xutl_xlsb.put_CellSt(stream, i-1, 0, lobValue => data.clob_value);
+                  xutl_xlsb.put_CellSt(stream, i-1, cellXfId, lobValue => data.clob_value);
               end;
             end if;
             
@@ -2719,6 +2736,7 @@ create or replace package body ExcelGen is
     sheetDefinition  sheet_definition_t;
     --columnFmt        varchar2(128);
     defaultFmt       varchar2(128);
+    DEFAULT_XF       CT_Xf;
     cellXf           CT_Xf;
     baseXfId         pls_integer := 0;
     columnId         pls_integer;
@@ -2736,6 +2754,7 @@ create or replace package body ExcelGen is
         columnId := sheetDefinition.sqlMetadata.columnList(i).id; -- visible column ID
         columnName := sheetDefinition.sqlMetadata.columnList(i).name;
         sheetColumn := null;
+        cellXf := DEFAULT_XF;
         
         if sheetDefinition.columnMap.exists(columnId) then
           sheetColumn := sheetDefinition.columnMap(columnId);
@@ -2753,13 +2772,28 @@ create or replace package body ExcelGen is
                       when dbms_sql.TIMESTAMP_WITH_TZ_TYPE then coalesce(sheetDefinition.defaultFmts.timestampFmt, ctx.defaultFmts.timestampFmt, DEFAULT_TIMESTAMP_FMT)
                       end;
         
-        sheetColumn.fmt := nvl(sheetColumn.fmt, defaultFmt);
-        
-        if sheetDefinition.columnLinkMap.exists(columnId) then
-          baseXfId := ctx.workbook.styles.hlinkXfId;
+        -- get this column style, if defined
+        if sheetColumn.xfId is not null then
+          cellXf := ctx.workbook.styles.cellXfs(sheetColumn.xfId);
         end if;
         
-        cellXf := makeCellXf(ctx.workbook.styles, baseXfId, sheetColumn.fmt);
+        -- if no numFmt defined, apply default
+        if cellXf.numFmtId = 0 and defaultFmt is not null then
+          cellXf.numFmtId := putNumfmt(ctx.workbook.styles, defaultFmt);
+        end if;
+        
+        -- if defined on this column, apply hyperlink master style and font
+        if sheetDefinition.columnLinkMap.exists(columnId) then
+          --baseXfId := ctx.workbook.styles.hlinkXfId;
+          cellXf.xfId := ctx.workbook.styles.hlinkXfId;
+          cellXf.fontId := ctx.workbook.styles.cellStyleXfs(cellXf.xfId).fontId;
+        else
+          cellXf.xfId := 0; -- Normal style
+        end if;
+        
+        setCellXfContent(cellXf);
+        
+        --cellXf := makeCellXf(ctx.workbook.styles, baseXfId, sheetColumn.fmt);
         sheetDefinition.sqlMetadata.columnList(i).xfId := putCellXf(ctx.workbook.styles, cellXf);
       
       end if;
@@ -3255,6 +3289,7 @@ create or replace package body ExcelGen is
     ctx_cache(p_ctxId).sheetIndexMap(sd.sheetName) := sd.sheetIndex;
     
     return sd.sheetIndex;
+    
   end;
   
   procedure addSheetFromQuery (
@@ -3441,7 +3476,27 @@ create or replace package body ExcelGen is
   begin
     ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).defaultFmts.timestampFmt := p_format;
   end;
-  
+
+  procedure setColumnProperties (
+    p_ctxId     in ctxHandle
+  , p_sheetId   in sheetHandle
+  , p_columnId  in pls_integer
+  , p_style     in cellStyleHandle default null
+  , p_header    in varchar2 default null
+  , p_width     in number default null
+  )
+  is
+    sheetColumn  sheet_column_t;
+  begin
+    sheetColumn.xfId := p_style;
+    sheetColumn.header := p_header;
+    if p_width is not null then
+      sheetColumn.width := p_width;
+      ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).customColWidth := true;
+    end if;
+    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).columnMap(p_columnId) := sheetColumn;
+  end;
+    
   procedure setColumnFormat (
     p_ctxId     in ctxHandle
   , p_sheetId   in sheetHandle
@@ -3451,15 +3506,8 @@ create or replace package body ExcelGen is
   , p_width     in number default null
   )
   is
-    sheetColumn  sheet_column_t;
   begin
-    sheetColumn.fmt := p_format;
-    sheetColumn.header := p_header;
-    if p_width is not null then
-      sheetColumn.width := p_width;
-      ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).customColWidth := true;
-    end if;
-    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).columnMap(p_columnId) := sheetColumn;
+    setColumnProperties(p_ctxId, p_sheetId, p_columnId, makeCellStyle(p_ctxId, p_format), p_header, p_width);
   end;
 
   procedure setColumnHlink (
