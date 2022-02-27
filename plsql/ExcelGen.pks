@@ -39,6 +39,8 @@ create or replace package ExcelGen is
     Marc Bleron       2021-09-04     Added wrapText attribute
     Marc Bleron       2022-02-06     Fixed table format issue for empty dataset
     Marc Bleron       2022-02-15     Added custom column header and width
+    Lee Lindley       2022-02-22     Added BINARY_DOUBLE data type
+                                     Added debug for queryString/cursor exceptions and counts
     Marc Bleron       2022-02-27     Added custom column style
 ====================================================================================== */
 
