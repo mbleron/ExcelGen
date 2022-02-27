@@ -952,7 +952,11 @@ end;
 
 ## CHANGELOG
 
-### 2.4.X (2022-02-22)
+### 2.5 (2022-02-27)
+
+* Enhancement : issue #10
+
+### 2.4.3 (2022-02-22)
 
 * add debug worksheet index number, cursor number and queryString
 * add binary_double data type
