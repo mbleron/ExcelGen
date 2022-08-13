@@ -952,6 +952,10 @@ end;
 
 ## CHANGELOG
 
+### 2.5.1 (2022-08-13)
+
+* Enhancement : support ANYDATA columns in cursor
+
 ### 2.5 (2022-02-27)
 
 * Enhancement : issue #10

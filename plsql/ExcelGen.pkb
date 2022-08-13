@@ -72,6 +72,7 @@ create or replace package body ExcelGen is
   ST_STRING              constant pls_integer := 1;
   ST_DATETIME            constant pls_integer := 2;
   ST_LOB                 constant pls_integer := 3;
+  ST_ANYDATA             constant pls_integer := 4;
 
   buffer_too_small       exception;
   pragma exception_init (buffer_too_small, -19011);
@@ -92,6 +93,7 @@ create or replace package body ExcelGen is
   , ts_value        timestamp
   , tstz_value      timestamp with time zone
   , clob_value      clob
+  , anydata_value   anydata
   );
   
   type data_map_t is table of data_t index by pls_integer;
@@ -1487,7 +1489,7 @@ create or replace package body ExcelGen is
   )
   return column_list_t
   is
-    baseColumnList  dbms_sql.desc_tab2;
+    baseColumnList  dbms_sql.desc_tab3;
     columnCount     integer;
     data            data_t;
     columnList      column_list_t := column_list_t();
@@ -1495,7 +1497,7 @@ create or replace package body ExcelGen is
     columnItem      column_t;
     columnId        pls_integer := 0;
   begin
-    dbms_sql.describe_columns2(p_cursor_number, columnCount, baseColumnList);
+    dbms_sql.describe_columns3(p_cursor_number, columnCount, baseColumnList);
     
     for i in 1 .. columnCount loop
       
@@ -1526,6 +1528,15 @@ create or replace package body ExcelGen is
       when dbms_sql.BINARY_DOUBLE_TYPE then
         dbms_sql.define_column(p_cursor_number, i, data.number_value);
         columnItem.supertype := ST_NUMBER;
+      when dbms_sql.USER_DEFINED_TYPE THEN
+        if baseColumnList(i).col_type_name = 'ANYDATA' 
+        then
+            dbms_sql.define_column(p_cursor_number, i, data.anydata_value);
+            columnItem.supertype := ST_ANYDATA;
+        else
+            error('Unsupported data type: %d, for column "%s"', baseColumnList(i).col_type, baseColumnList(i).col_name);
+        end if;
+
       else
         error('Unsupported data type: %d, for column "%s"', baseColumnList(i).col_type, baseColumnList(i).col_name);
       end case;
@@ -2176,6 +2187,27 @@ create or replace package body ExcelGen is
                      ||dbms_xmlgen.convert(makeHyperlinkFormula(link, rowIdx, columnId, sd.sqlMetadata.columnList, r.dataMap))
                      ||'</f><v>'||dbms_xmlgen.convert(strValue)||'</v></c>' ;
     end;
+    function get_ad_number(p_ad sys.anydata) return varchar2 is
+        x number;
+        n number;
+    begin
+        x := p_ad.getnumber(n);
+        return to_char(n, 'TM9', NLS_PARAM_STRING);
+    end;
+    function get_ad_date(p_ad sys.anydata) return varchar2 is
+        x number;
+        d date;
+    begin
+        x := p_ad.getdate(d);
+        return to_char( toOADate(dt => d), 'TM9', NLS_PARAM_STRING );
+    end;
+    function get_ad_varchar2(p_ad sys.anydata) return varchar2 is
+        x number;
+        v varchar2(4000);
+    begin
+        x := p_ad.getvarchar2(v);
+        return v;
+    end;
     
   begin
 
@@ -2283,7 +2315,19 @@ create or replace package body ExcelGen is
           when dbms_sql.BINARY_DOUBLE_TYPE then
             dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.number_value);
             data.varchar2_value := to_char(data.number_value);
-            
+
+          when dbms_sql.USER_DEFINED_TYPE then
+            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.anydata_value);
+            -- can expand this to other types, but these are expected from reading cells from another xlsx
+            if data.anydata_value is not null then
+                data.varchar2_value := 
+                    case sys.anydata.getTypeName(data.anydata_value)
+                    when 'SYS.NUMBER' then get_ad_number(data.anydata_value)
+                    when 'SYS.DATE' then get_ad_date(data.anydata_value)
+                    when 'SYS.VARCHAR2' then get_ad_varchar2(data.anydata_value)
+                    end;
+            end if;
+
           end case;
           
           r.dataMap(i) := data;
@@ -2353,6 +2397,37 @@ create or replace package body ExcelGen is
                 end;
               end if;
               
+            when ST_ANYDATA then      
+                if data.varchar2_value is not null then
+                    case sys.anydata.getTypeName(data.anydata_value)
+                    when 'SYS.NUMBER' then 
+                        if not cellHasLink then
+                            stream_write(stream, '<c r="'||cellRef
+                                ||case when cellXfId != 0 then '" s="'||to_char(cellXfId) end
+                                ||'"><v>'||data.varchar2_value||'</v></c>');
+                        else
+                            stream_write(stream, makeHyperlinkCellContent(i, data.varchar2_value));
+                        end if;
+                    when 'SYS.DATE' then 
+                        if not cellHasLink then
+                            stream_write(stream, '<c r="'||cellRef
+                                ||'" s="'||to_char(cellXfId)
+                                ||'"><v>'||data.varchar2_value||'</v></c>');
+                        else
+                            stream_write(stream, makeHyperlinkCellContent(i, data.varchar2_value));
+                        end if;
+                    when 'SYS.VARCHAR2' then
+                        if not cellHasLink then
+                            sst_idx := put_string(ctx, data.varchar2_value);
+                            stream_write(stream, '<c r="'||cellRef
+                                ||case when cellXfId != 0 then '" s="'||to_char(cellXfId) end
+                                ||'" t="s"><v>'||to_char(sst_idx - 1)||'</v></c>');
+                        else
+                            stream_write(stream, makeHyperlinkCellContent(i, escapeQuote(data.varchar2_value)));
+                        end if;
+                    end case;
+                end if;
+             
             end case;
           
           end if;
@@ -2495,6 +2570,28 @@ create or replace package body ExcelGen is
     partitionStart  pls_integer;
     partitionStop   pls_integer;
     
+    function get_ad_number(p_ad sys.anydata) return number is
+        x number;
+        n number;
+    begin
+        x := p_ad.getnumber(n);
+        return n;
+    end;
+    function get_ad_date(p_ad sys.anydata) return number is
+        x number;
+        d date;
+    begin
+        x := p_ad.getdate(d);
+        return toOADate(dt => d);
+    end;
+    function get_ad_varchar2(p_ad sys.anydata) return varchar2 is
+        x number;
+        v varchar2(4000);
+    begin
+        x := p_ad.getvarchar2(v);
+        return v;
+    end;
+
   begin
     
     -- prefetch
@@ -2621,6 +2718,25 @@ create or replace package body ExcelGen is
                   -- stream CLOB content as an inline string, up to 32767 chars
                   xutl_xlsb.put_CellSt(stream, i-1, cellXfId, lobValue => data.clob_value);
               end;
+            end if;
+          
+          when dbms_sql.USER_DEFINED_TYPE then
+            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.anydata_value);
+            if data.anydata_value is not null then
+                -- can expand this to other types, but these are expected from reading cells from another xlsx
+                case sys.anydata.getTypeName(data.anydata_value)
+                when 'SYS.NUMBER' then 
+                    xutl_xlsb.put_CellNumber(stream, i-1, cellXfId, get_ad_number(data.anydata_value));
+                when 'SYS.DATE' then 
+                    -- does toOADate 
+                    xutl_xlsb.put_CellNumber(stream, i-1, cellXfId, get_ad_date(data.anydata_value));
+                when 'SYS.VARCHAR2' then 
+                    data.varchar2_value := get_ad_varchar2(data.anydata_value);
+                    if data.varchar2_value is not null then
+                        sst_idx := put_string(ctx, data.varchar2_value);
+                        xutl_xlsb.put_CellIsst(stream, i-1, cellXfId, sst_idx-1);
+                    end if;
+                end case;
             end if;
             
           end case;
