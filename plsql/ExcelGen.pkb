@@ -2201,7 +2201,7 @@ create or replace package body ExcelGen is
         stream_write(stream, '<cols>');
         for i in 1 .. sd.columnMap.count loop
           if sd.columnMap(i).width is not null then
-            stream_write(stream, '<col min="'||to_char(i)||'" max="'||to_char(i)||'" width="'||to_char(getColumnWidth(sd.columnMap(i).width),'TM9')||'" customWidth="1"/>');
+            stream_write(stream, '<col min="'||to_char(i)||'" max="'||to_char(i)||'" width="'||to_char(getColumnWidth(sd.columnMap(i).width),'TM9',NLS_PARAM_STRING)||'" customWidth="1"/>');
           end if;
         end loop;
         stream_write(stream, '</cols>');

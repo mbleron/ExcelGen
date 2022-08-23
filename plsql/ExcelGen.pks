@@ -42,6 +42,7 @@ create or replace package ExcelGen is
     Lee Lindley       2022-02-22     Added BINARY_DOUBLE data type
                                      Added debug for queryString/cursor exceptions and counts
     Marc Bleron       2022-02-27     Added custom column style
+    Marc Bleron       2022-08-23     Fixed number format for column width (xlsx)
 ====================================================================================== */
 
   -- file types

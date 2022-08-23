@@ -952,6 +952,10 @@ end;
 
 ## CHANGELOG
 
+### 2.5.1 (2022-08-23)
+
+* Fix : issue #27
+
 ### 2.5 (2022-02-27)
 
 * Enhancement : issue #10
