@@ -1,26 +1,5 @@
 create or replace package body ExcelGen is
 
-  NAMED_COLORS          constant varchar2(4000) := 
-  'aliceblue:F0F8FF;antiquewhite:FAEBD7;aqua:00FFFF;aquamarine:7FFFD4;azure:F0FFFF;beige:F5F5DC;bisque:FFE4C4;black:000000;' ||
-  'blanchedalmond:FFEBCD;blue:0000FF;blueviolet:8A2BE2;brown:A52A2A;burlywood:DEB887;cadetblue:5F9EA0;chartreuse:7FFF00;chocolate:D2691E;' ||
-  'coral:FF7F50;cornflowerblue:6495ED;cornsilk:FFF8DC;crimson:DC143C;cyan:00FFFF;darkblue:00008B;darkcyan:008B8B;darkgoldenrod:B8860B;' ||
-  'darkgray:A9A9A9;darkgreen:006400;darkgrey:A9A9A9;darkkhaki:BDB76B;darkmagenta:8B008B;darkolivegreen:556B2F;darkorange:FF8C00;darkorchid:9932CC;' ||
-  'darkred:8B0000;darksalmon:E9967A;darkseagreen:8FBC8F;darkslateblue:483D8B;darkslategray:2F4F4F;darkslategrey:2F4F4F;darkturquoise:00CED1;darkviolet:9400D3;' ||
-  'deeppink:FF1493;deepskyblue:00BFFF;dimgray:696969;dimgrey:696969;dodgerblue:1E90FF;firebrick:B22222;floralwhite:FFFAF0;forestgreen:228B22;' ||
-  'fuchsia:FF00FF;gainsboro:DCDCDC;ghostwhite:F8F8FF;gold:FFD700;goldenrod:DAA520;gray:808080;green:008000;greenyellow:ADFF2F;' ||
-  'grey:808080;honeydew:F0FFF0;hotpink:FF69B4;indianred:CD5C5C;indigo:4B0082;ivory:FFFFF0;khaki:F0E68C;lavender:E6E6FA;' ||
-  'lavenderblush:FFF0F5;lawngreen:7CFC00;lemonchiffon:FFFACD;lightblue:ADD8E6;lightcoral:F08080;lightcyan:E0FFFF;lightgoldenrodyellow:FAFAD2;lightgray:D3D3D3;' ||
-  'lightgreen:90EE90;lightgrey:D3D3D3;lightpink:FFB6C1;lightsalmon:FFA07A;lightseagreen:20B2AA;lightskyblue:87CEFA;lightslategray:778899;lightslategrey:778899;' ||
-  'lightsteelblue:B0C4DE;lightyellow:FFFFE0;lime:00FF00;limegreen:32CD32;linen:FAF0E6;magenta:FF00FF;maroon:800000;mediumaquamarine:66CDAA;' ||
-  'mediumblue:0000CD;mediumorchid:BA55D3;mediumpurple:9370DB;mediumseagreen:3CB371;mediumslateblue:7B68EE;mediumspringgreen:00FA9A;mediumturquoise:48D1CC;mediumvioletred:C71585;' ||
-  'midnightblue:191970;mintcream:F5FFFA;mistyrose:FFE4E1;moccasin:FFE4B5;navajowhite:FFDEAD;navy:000080;oldlace:FDF5E6;olive:808000;' ||
-  'olivedrab:6B8E23;orange:FFA500;orangered:FF4500;orchid:DA70D6;palegoldenrod:EEE8AA;palegreen:98FB98;paleturquoise:AFEEEE;palevioletred:DB7093;' ||
-  'papayawhip:FFEFD5;peachpuff:FFDAB9;peru:CD853F;pink:FFC0CB;plum:DDA0DD;powderblue:B0E0E6;purple:800080;rebeccapurple:663399;' ||
-  'red:FF0000;rosybrown:BC8F8F;royalblue:4169E1;saddlebrown:8B4513;salmon:FA8072;sandybrown:F4A460;seagreen:2E8B57;seashell:FFF5EE;' ||
-  'sienna:A0522D;silver:C0C0C0;skyblue:87CEEB;slateblue:6A5ACD;slategray:708090;slategrey:708090;snow:FFFAFA;springgreen:00FF7F;' ||
-  'tan:D2B48C;teal:008080;thistle:D8BFD8;tomato:FF6347;turquoise:40E0D0;violet:EE82EE;wheat:F5DEB3;white:FFFFFF;' ||
-  'steelblue:4682B4;whitesmoke:F5F5F5;yellow:FFFF00;yellowgreen:9ACD32';
-
   -- OPC part MIME types
   MT_STYLES          constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml';
   MT_WORKBOOK        constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml';
@@ -62,6 +41,7 @@ create or replace package body ExcelGen is
   
   CNTRL_CHARS            constant varchar2(32) := to_char(unistr('\0000\0001\0002\0003\0004\0005\0006\0007\0008\000B\000C\000E\000F\0010\0011\0012\0013\0014\0015\0016\0017\0018\0019\001A\001B\001C\001D\001E\001F'));
   
+  DEFAULT_COL_WIDTH      constant number := 10.71;
   DEFAULT_DATE_FMT       constant varchar2(32) := 'dd/mm/yyyy hh:mm:ss';
   DEFAULT_TIMESTAMP_FMT  constant varchar2(32) := 'dd/mm/yyyy hh:mm:ss.000';
   DEFAULT_NUM_FMT        constant varchar2(32) := null; 
@@ -72,11 +52,10 @@ create or replace package body ExcelGen is
   ST_STRING              constant pls_integer := 1;
   ST_DATETIME            constant pls_integer := 2;
   ST_LOB                 constant pls_integer := 3;
+  ST_VARIANT             constant pls_integer := 4;
 
   buffer_too_small       exception;
   pragma exception_init (buffer_too_small, -19011);
-
-  type color_map_t is table of varchar2(6) index by varchar2(20);
 
   type stream_t is record (
     content   clob
@@ -85,22 +64,24 @@ create or replace package body ExcelGen is
   );
 
   type data_t is record (
-    varchar2_value  varchar2(32767)
+    st              pls_integer  -- supertype
+  , db_type         pls_integer
+  , varchar2_value  varchar2(32767)
   , char_value      char(32767)
   , number_value    number
   , date_value      date
   , ts_value        timestamp
   , tstz_value      timestamp with time zone
   , clob_value      clob
+  , anydata_value   anydata
   );
   
   type data_map_t is table of data_t index by pls_integer;
-  type data_row_t is record (dataMap data_map_t);
   
   type cell_ref_t is record (value varchar2(10), c varchar2(3), cn pls_integer, r pls_integer); 
   type range_t is record (expr varchar2(32), start_ref cell_ref_t, end_ref cell_ref_t);
   
-  --type int32_list_t is table of pls_integer;
+  type intList_t is table of pls_integer;
   type int_set_t is table of pls_integer index by pls_integer;
   type link_token_map_t is table of varchar2(8) index by pls_integer;
   type link_t is record (target varchar2(2048), tooltip varchar2(256), tokens link_token_map_t, fmla varchar2(8192));
@@ -115,6 +96,7 @@ create or replace package body ExcelGen is
   , scale    pls_integer
   , id       pls_integer
   , colRef   varchar2(3)
+  , colNum   pls_integer
   , xfId     pls_integer := 0
   , hasLink  boolean := false
   , link     link_t
@@ -234,14 +216,18 @@ create or replace package body ExcelGen is
   type CT_TableColumns is table of CT_TableColumn;
   
   type CT_Table is record (
-    id          pls_integer
-  , name        varchar2(256)
-  , ref         range_t
-  , cols        CT_TableColumns
-  , showHeader  boolean
-  , autoFilter  boolean
-  , styleName   varchar2(64)
-  , partName    varchar2(256)
+    id                 pls_integer
+  , name               varchar2(256)
+  , ref                range_t
+  , cols               CT_TableColumns
+  , showHeader         boolean
+  , autoFilter         boolean
+  , styleName          varchar2(64)
+  , partName           varchar2(256)
+  , showFirstColumn    boolean
+  , showLastColumn     boolean
+  , showRowStripes     boolean
+  , showColumnStripes  boolean
   );
   
   type CT_Tables is table of CT_Table index by pls_integer;
@@ -290,38 +276,106 @@ create or replace package body ExcelGen is
   , r_num             pls_integer
   );
   
-  type sheet_header_t is record (
+  type table_column_t is record (
+    name  varchar2(1024)
+  , xfId  pls_integer
+  );
+  
+  type table_column_map_t is table of table_column_t index by pls_integer;
+  
+  type table_header_t is record (
     show        boolean
-  , xfId        pls_integer
+  --, xfId        pls_integer
   , isFrozen    boolean
   , autoFilter  boolean
   );
   
-  type sheet_column_t is record (
-    header  varchar2(1024)
-  --, fmt     varchar2(128)
-  , xfId    pls_integer
+  type colProperties_t is record (
+    xfId    pls_integer
   , width   number
   );
   
-  type sheet_column_map_t is table of sheet_column_t index by pls_integer;
+  type colProperties_map_t is table of colProperties_t index by pls_integer;
+  
+  type rowProperties_t is record (
+    xfId    pls_integer
+  , height  number
+  );
+  
+  type rowProperties_map_t is table of rowProperties_t index by pls_integer;
+  
+  type cell_t is record (
+    r     pls_integer
+  , c     varchar2(3)
+  , cn    pls_integer
+  , xfId  pls_integer
+  , v     data_t
+  --, st    pls_integer  -- supertype
+  , link  link_t
+  );
+  
+  type cellList_t is table of cell_t index by pls_integer;  
+  type row_t is record (id pls_integer, props rowProperties_t, cells cellList_t);
+  type rowList_t is table of row_t index by pls_integer;
+  type sheetData_t is record (rows rowList_t, hasCells boolean);
+  
+  type anchorRef_t is record (tableId pls_integer, anchorPosition pls_integer, rowOffset pls_integer, colOffset pls_integer);
+  
+  type floatingCell_t is record (data data_t, xfId pls_integer, anchorRef anchorRef_t);
+  type floatingCellList_t is table of floatingCell_t;
+  
+  type cellSpan_t is record (anchorRef anchorRef_t, rowSpan pls_integer, colSpan pls_integer);
+  type cellSpanList_t is table of cellSpan_t;
+  
+  type table_t is record (
+    id                 pls_integer
+  , header             table_header_t
+  , formatAsTable      boolean
+  , tableStyle         varchar2(32)
+  , sqlMetadata        sql_metadata_t
+  , columnLinkMap      link_map_t
+  --, anchorRef          cell_ref_t
+  , range              range_t
+  , isEmpty            boolean
+  , columnMap          table_column_map_t
+  , rowMap             rowProperties_map_t
+  , showFirstColumn    boolean
+  , showLastColumn     boolean
+  , showRowStripes     boolean
+  , showColumnStripes  boolean
+  , anchorRef          anchorRef_t
+  );
+  
+  type tableTreeNode_t is record (nodeId pls_integer, children intList_t);
+  type tableTree_t is table of tableTreeNode_t index by pls_integer;
+  type tableForest_t is record (roots intList_t, t tableTree_t);
+  type tableList_t is table of table_t;
   
   type sheet_definition_t is record (
-    sheetName       varchar2(128)
-  , sheetIndex      pls_integer
-  , tabColor        varchar2(8)
-  , header          sheet_header_t
-  , formatAsTable   boolean
-  , tableStyle      varchar2(32)
-  , sqlMetadata     sql_metadata_t
-  , defaultFmts     defaultFmts_t
-  , columnMap       sheet_column_map_t
-  , customColWidth  boolean
-  , columnLinkMap   link_map_t
+    sheetName            varchar2(128)
+  , sheetIndex           pls_integer
+  , tabColor             varchar2(8)
+  , defaultFmts          defaultFmts_t
+  , columnMap            colProperties_map_t
+  , rowMap               rowProperties_map_t
+  , hasCustomColProps    boolean
+  --, columnLinkMap   link_map_t
+  , tableList            tableList_t
+  , tableForest          tableForest_t
+  , data                 sheetData_t
+  , streamable           boolean
+  , done                 boolean
+  , hasProps             boolean
+  , activePaneAnchorRef  cell_ref_t
+  , showGridLines        boolean
+  , showRowColHeaders    boolean
+  , defaultRowHeight     number
+  , mergedCells          cellSpanList_t --rangeList_t
+  , floatingCells        floatingCellList_t
   );
   
   type sheet_definition_map_t is table of sheet_definition_t index by pls_integer;
-  
+    
   type encryption_info_t is record (
     version       varchar2(3)
   , cipherName    varchar2(16)
@@ -345,9 +399,21 @@ create or replace package body ExcelGen is
   
   type context_cache_t is table of context_t index by pls_integer;
   
-  colorMap       color_map_t;
   ctx_cache      context_cache_t;
+  currentCtx     context_t;
+  currentCtxId   pls_integer := -1;
+  
   debug_enabled  boolean := false;
+
+  procedure loadContext (ctxId in pls_integer)
+  is
+  begin
+    if ctxId != currentCtxId then
+      ctx_cache(currentCtxId) := currentCtx;
+      currentCtxId := ctxId;
+      currentCtx := ctx_cache(currentCtxId);
+    end if;
+  end;
   
   procedure setDebug (p_status in boolean)
   is
@@ -375,32 +441,10 @@ create or replace package body ExcelGen is
     raise_application_error(code, utl_lms.format_message(message, arg1, arg2, arg3));
   end;
   
-  procedure initColorMap 
-  is
-    token  varchar2(32);
-    p1     pls_integer := 1;
-    p2     pls_integer;  
-    i      pls_integer;
-  begin
-    debug('initColorMap');
-    loop
-      p2 := instr(NAMED_COLORS, ';', p1);
-      if p2 = 0 then
-        token := substr(NAMED_COLORS, p1);
-      else
-        token := substr(NAMED_COLORS, p1, p2-p1);    
-        p1 := p2 + 1;
-      end if;
-      i := instr(token,':');
-      colorMap(substr(token,1,i-1)) := substr(token,i+1);
-      exit when p2 = 0;
-    end loop;   
-  end;
-  
   procedure init
   is  
   begin
-    initColorMap;
+    null;
   end;
 
   function base26decode (p_str in varchar2) 
@@ -531,6 +575,22 @@ create or replace package body ExcelGen is
     end if;
     return output;
   end;
+
+  function getDefaultFormat (
+    ctx     in context_t
+  , sd      in sheet_definition_t
+  , dbType  in pls_integer
+  )
+  return varchar2
+  is
+  begin
+    return case dbType
+           when dbms_sql.NUMBER_TYPE then coalesce(sd.defaultFmts.numFmt, ctx.defaultFmts.numFmt, DEFAULT_NUM_FMT)
+           when dbms_sql.DATE_TYPE then coalesce(sd.defaultFmts.dateFmt, ctx.defaultFmts.dateFmt, DEFAULT_DATE_FMT)
+           when dbms_sql.TIMESTAMP_TYPE then coalesce(sd.defaultFmts.timestampFmt, ctx.defaultFmts.timestampFmt, DEFAULT_TIMESTAMP_FMT)
+           when dbms_sql.TIMESTAMP_WITH_TZ_TYPE then coalesce(sd.defaultFmts.timestampFmt, ctx.defaultFmts.timestampFmt, DEFAULT_TIMESTAMP_FMT)
+           end;    
+  end;
   
   function makeCellRef (
     colRef  in varchar2
@@ -538,13 +598,46 @@ create or replace package body ExcelGen is
   )
   return cell_ref_t
   is
-    cellRef cell_ref_t;
+    cellRef  cell_ref_t;
   begin
     cellRef.c := colRef;
     cellRef.cn := base26decode(cellRef.c);
     cellRef.r := rowRef;
     cellRef.value := cellRef.c || to_char(cellRef.r);
     return cellRef;
+  end;
+
+  function makeCellRef (
+    colIdx  in pls_integer
+  , rowIdx  in pls_integer
+  )
+  return varchar2
+  is
+  begin
+    return makeCellRef(base26encode(colIdx), rowIdx).value;
+  end;
+
+  function translateCellRef (
+    cellRef   in cell_ref_t
+  , colShift  in pls_integer default 0
+  , rowShift  in pls_integer default 0
+  )
+  return cell_ref_t
+  is
+    newCellRef  cell_ref_t := cellRef;
+  begin
+    newCellRef.cn := cellRef.cn + nvl(colShift, 0);
+    if newCellRef.cn not between 1 and MAX_COLUMN_NUMBER then
+      error('Column index out of range: %d', newCellRef.cn);
+    else
+      newCellRef.c := base26encode(newCellRef.cn);
+    end if;
+    newCellRef.r := cellRef.r + nvl(rowShift, 0);
+    if newCellRef.r not between 1 and MAX_ROW_NUMBER then
+      error('Row index out of range: %d', newCellRef.r);
+    end if;
+    newCellRef.value := newCellRef.c || to_char(newCellRef.r);
+    return newCellRef;
   end;
   
   function makeRange (
@@ -561,6 +654,20 @@ create or replace package body ExcelGen is
     range.end_ref := makeCellRef(endCol, endRow);
     range.expr := range.start_ref.value || case when range.end_ref.value is not null then ':'||range.end_ref.value end;
     return range;
+  end;
+  
+  function makeRange (
+    cellSpan  in cellSpan_t 
+  )
+  return range_t
+  is
+  begin
+    return makeRange( 
+             base26encode(cellSpan.anchorRef.colOffset)
+           , cellSpan.anchorRef.rowOffset
+           , base26encode(cellSpan.anchorRef.colOffset + cellSpan.colSpan - 1)
+           , cellSpan.anchorRef.rowOffset + cellSpan.rowSpan - 1
+           );
   end;
   
   function parseRangeExpr (
@@ -597,6 +704,7 @@ create or replace package body ExcelGen is
       cellRef.r := rowNum;
       cellRef.c := colRef; 
       cellRef.cn := colNum;
+      cellRef.value := expr;
     end;
     
   begin
@@ -631,6 +739,8 @@ create or replace package body ExcelGen is
       end if;
     
     end if;
+    
+    range.expr := expr;
     
     return range;
     
@@ -731,42 +841,16 @@ create or replace package body ExcelGen is
     buf := buf || str;
   end;
   
-  function validateColor (
-    colorCode  in varchar2
-  )
-  return varchar2
-  is
-    rgbCode  varchar2(8);
-  begin
-    if colorCode is not null then
-      -- RGB color code?
-      if substr(colorCode,1,1) = '#' then
-        rgbCode := upper(substr(colorCode,2)); 
-        if rgbCode is null or not regexp_like(rgbCode, '^[0-9A-F]{6}$') then
-          error('Invalid RGB color code: %s', colorCode);
-        end if;
-        -- adding opaque alpha channel by default
-        rgbCode := 'FF' || rgbCode;
-      elsif colorMap.exists(lower(colorCode)) then
-        rgbCode := 'FF' || colorMap(lower(colorCode));
-      elsif regexp_like(colorCode,'^theme:\d+$') then
-        rgbCode := colorCode;
-      else
-        error('Invalid color code: %s', colorCode);
-      end if;
-    end if;
-    return rgbCode;
-  end;
-  
   function makeRgbColor (
     r  in uint8
   , g  in uint8
   , b  in uint8
+  , a  in number default null
   )
   return varchar2
   is
   begin
-    return '#' || to_char(r * 65536 + g * 256 + b, 'FM0XXXXX');
+    return '#' || ExcelTypes.makeRgbColor(r,g,b,a);
   end;
 
   function putNumfmt (
@@ -793,32 +877,8 @@ create or replace package body ExcelGen is
   )
   return CT_BorderPr
   is
-    borderPr  CT_BorderPr;
   begin
-    borderPr.style := p_style;
-    borderPr.color := validateColor(p_color);
-    return borderPr;
-  end;
-  
-  procedure setBorderContent (
-    border  in out nocopy CT_Border
-  )
-  is
-    function getBorderPrContent (borderName in varchar2, borderPr in CT_BorderPr)
-    return varchar2
-    is
-    begin
-      return '<' || borderName || 
-             case when borderPr.style is not null then ' style="'||borderPr.style||'"' end || 
-             case when borderPr.color is not null then '><color rgb="'||borderPr.color||'"/></'||borderName||'>' else '/>' end;
-    end;
-  begin
-    string_write(border.content, '<border>');
-    string_write(border.content, getBorderPrContent('left', border.left));
-    string_write(border.content, getBorderPrContent('right', border.right));
-    string_write(border.content, getBorderPrContent('top', border.top));
-    string_write(border.content, getBorderPrContent('bottom', border.bottom));
-    string_write(border.content, '</border>');    
+    return ExcelTypes.makeBorderPr(p_style, p_color);
   end;
   
   function makeBorder (
@@ -829,14 +889,8 @@ create or replace package body ExcelGen is
   )
   return CT_Border
   is
-    border  CT_Border;
   begin
-    border.left := p_left;
-    border.right := p_right;
-    border.top := p_top;
-    border.bottom := p_bottom;
-    setBorderContent(border);
-    return border;
+    return ExcelTypes.makeBorder(p_left, p_right, p_top, p_bottom);
   end;
   
   function makeBorder (
@@ -845,9 +899,8 @@ create or replace package body ExcelGen is
   )
   return CT_Border
   is
-    borderPr  CT_BorderPr := makeBorderPr(p_style, p_color);
   begin
-    return makeBorder(borderPr, borderPr, borderPr, borderPr);
+    return ExcelTypes.makeBorder(p_style, p_color);
   end;
   
   function putBorder (
@@ -868,33 +921,6 @@ create or replace package body ExcelGen is
     return borderId;
   end;
 
-  procedure setFontContent (
-    font  in out nocopy CT_Font
-  )
-  is
-  begin
-    string_write(font.content, '<font>');
-    string_write(font.content, '<sz val="'||to_char(font.sz)||'"/>');
-    string_write(font.content, '<name val="'||to_char(font.name)||'"/>');
-    if font.b then
-      string_write(font.content, '<b/>');
-    end if;
-    if font.i then
-      string_write(font.content, '<i/>');
-    end if;
-    if font.color is not null then
-      if font.color like 'theme:%' then
-        string_write(font.content, '<color theme="'||regexp_substr(font.color,'\d+$')||'"/>');
-      else
-        string_write(font.content, '<color rgb="'||font.color||'"/>');
-      end if;
-    end if;
-    if font.u is not null then
-      string_write(font.content, '<u val="'||font.u||'"/>');
-    end if;
-    string_write(font.content, '</font>');    
-  end;
-
   function makeFont (
     p_name   in varchar2
   , p_sz     in pls_integer
@@ -905,24 +931,8 @@ create or replace package body ExcelGen is
   )
   return CT_Font
   is
-    font  CT_Font;
   begin
-    font.name := p_name;
-    font.sz := p_sz;
-    font.b := p_b;
-    font.i := p_i;
-    
-    if p_u is not null then 
-      if ExcelTypes.isValidUnderlineStyle(p_u) then
-        font.u := p_u;
-      else
-        error('Invalid underline style: %s', p_u);
-      end if;
-    end if;
-    
-    font.color := validateColor(p_color);
-    setFontContent(font);
-    return font;
+    return ExcelTypes.makeFont(p_name, p_sz, p_b, p_i, p_color, p_u);
   end;
   
   function putFont (
@@ -942,21 +952,6 @@ create or replace package body ExcelGen is
     end if;
     return fontId;
   end;
-  
-  procedure setFillContent (
-    fill  in out nocopy CT_Fill
-  )
-  is
-  begin
-    string_write(fill.content, '<fill><patternFill patternType="'||fill.patternFill.patternType||'">');
-    if fill.patternFill.fgColor is not null then
-      string_write(fill.content, '<fgColor rgb="'||fill.patternFill.fgColor||'"/>');
-    end if;
-    if fill.patternFill.bgColor is not null then
-      string_write(fill.content, '<bgColor rgb="'||fill.patternFill.bgColor||'"/>');
-    end if;
-    string_write(fill.content, '</patternFill></fill>');    
-  end;
 
   function makePatternFill (
     p_patternType  in varchar2
@@ -965,13 +960,8 @@ create or replace package body ExcelGen is
   )
   return CT_Fill
   is
-    fill  CT_Fill;
   begin
-    fill.patternFill.patternType := p_patternType;
-    fill.patternFill.fgColor := validateColor(p_fgColor);
-    fill.patternFill.bgColor := validateColor(p_bgColor);
-    setFillContent(fill);
-    return fill;
+    return ExcelTypes.makePatternFill(p_patternType, p_fgColor, p_bgColor);
   end;
   
   function putFill (
@@ -992,26 +982,6 @@ create or replace package body ExcelGen is
     return fillId;
   end;
 
-  procedure setAlignmentContent (
-    alignment  in out nocopy CT_CellAlignment
-  )
-  is
-  begin
-    if coalesce(alignment.horizontal, alignment.vertical) is not null or alignment.wrapText then
-      string_write(alignment.content, '<alignment');
-      if alignment.horizontal is not null then
-        string_write(alignment.content, ' horizontal="'||alignment.horizontal||'"');
-      end if;
-      if alignment.vertical is not null then
-        string_write(alignment.content, ' vertical="'||alignment.vertical||'"');
-      end if;
-      if alignment.wrapText then
-        string_write(alignment.content, ' wrapText="1"');
-      end if;
-      string_write(alignment.content, '/>');
-    end if;    
-  end;
-
   function makeAlignment (
     p_horizontal  in varchar2 default null
   , p_vertical    in varchar2 default null
@@ -1019,13 +989,8 @@ create or replace package body ExcelGen is
   )
   return CT_CellAlignment
   is
-    alignment  CT_CellAlignment;
   begin
-    alignment.horizontal := p_horizontal;
-    alignment.vertical := p_vertical;
-    alignment.wrapText := p_wrapText;
-    setAlignmentContent(alignment);
-    return alignment;
+    return ExcelTypes.makeAlignment(p_horizontal, p_vertical, p_wrapText);
   end;
 
   procedure setCellXfContent (
@@ -1170,9 +1135,121 @@ create or replace package body ExcelGen is
   )
   return cellStyleHandle
   is
-    xf  CT_Xf := makeCellXf(ctx_cache(p_ctxId).workbook.styles, 0, p_numFmtCode, p_font, p_fill, p_border, p_alignment);
+    xf  CT_Xf;
   begin
-    return putCellXf(ctx_cache(p_ctxId).workbook.styles, xf);        
+    loadContext(p_ctxId);
+    xf := makeCellXf(currentCtx.workbook.styles, 0, p_numFmtCode, p_font, p_fill, p_border, p_alignment);
+    return putCellXf(currentCtx.workbook.styles, xf);
+  end;
+
+  function makeCellStyleCss (
+    p_ctxId  in ctxHandle
+  , p_css    in varchar2
+  )
+  return cellStyleHandle
+  is
+    style  ExcelTypes.CT_Style := ExcelTypes.getStyleFromCss(p_css);
+    xf     CT_Xf;
+  begin
+    loadContext(p_ctxId);
+    xf := makeCellXf(currentCtx.workbook.styles, 0, style.numberFormat, style.font, style.fill, style.border, style.alignment);
+    return putCellXf(currentCtx.workbook.styles, xf);
+  end;
+
+  function mergeCellFormat (
+    ctx     in out nocopy context_t
+  , style   in cellStyleHandle
+  , format  in varchar2
+  , force   in boolean default false
+  )
+  return cellStyleHandle
+  is
+    xf    CT_Xf;
+    xfId  pls_integer := style;
+  begin
+    if xfId is not null then
+      -- get style definition record
+      xf := ctx.workbook.styles.cellXfs(xfId);
+      -- set format property
+      if format is not null and ( xf.numFmtId = 0 or force ) then
+        xf.numFmtId := putNumfmt(ctx.workbook.styles, format);
+        setCellXfContent(xf); -- update content
+        xfId := putCellXf(ctx.workbook.styles, xf);
+      end if;      
+    else
+      xf := makeCellXf(ctx.workbook.styles, 0, format);
+      xfId := putCellXf(ctx.workbook.styles, xf);
+    end if;
+    return xfId;
+  end;
+
+  function mergeCellStyle (
+    ctx         in out nocopy context_t
+  , masterXfId  in cellStyleHandle
+  , xfId        in cellStyleHandle
+  )
+  return cellStyleHandle
+  is
+    masterXf     CT_Xf;
+    xf           CT_Xf;
+    style        ExcelTypes.CT_Style;
+  begin
+    if xfId != 0 then  
+  
+      masterXf := ctx.workbook.styles.cellXfs(masterXfId);
+      xf := ctx.workbook.styles.cellXfs(xfId);
+
+      if xf.xfId = 0 then
+        xf.xfId := masterXf.xfId;
+      end if;
+      
+      -- number format
+      if xf.numFmtId = 0 then
+        xf.numFmtId := masterXf.numFmtId;
+      end if;
+      
+      -- font
+      if xf.fontId != 0 then
+        style.font := ExcelTypes.mergeFonts( ctx.workbook.styles.fonts(masterXf.fontId)
+                                           , ctx.workbook.styles.fonts(xf.fontId) );
+        xf.fontId := putFont(ctx.workbook.styles, style.font); 
+      else
+        xf.fontId := masterXf.fontId;
+      end if;
+      
+      -- fill
+      if xf.fillId != 0 then
+        style.fill := ExcelTypes.mergePatternFills( ctx.workbook.styles.fills(masterXf.fillId)
+                                                  , ctx.workbook.styles.fills(xf.fillId) );        
+        xf.fillId := putFill(ctx.workbook.styles, style.fill);
+      else
+        xf.fillId := masterXf.fillId;
+      end if;
+      
+      -- border
+      if xf.borderId != 0 then
+        style.border := ExcelTypes.mergeBorders( ctx.workbook.styles.borders(masterXf.borderId)
+                                               , ctx.workbook.styles.borders(xf.borderId) );
+        xf.borderId := putBorder(ctx.workbook.styles, style.border);
+      else
+        xf.borderId := masterXf.borderId;
+      end if;
+      
+      -- alignment
+      if xf.alignment.content is not null then
+        xf.alignment := ExcelTypes.mergeAlignments(masterXf.alignment, xf.alignment);
+      else
+        xf.alignment := masterXf.alignment;
+      end if;
+      
+      setCellXfContent(xf);
+      return putCellXf(ctx.workbook.styles, xf);
+    
+    else
+      
+      return masterXfId;
+      
+    end if;
   end;
 
   function getColumnWidth (
@@ -1261,18 +1338,17 @@ create or replace package body ExcelGen is
   end;
   
   procedure prepareHyperlinks (
-    sheetDef    in out nocopy sheet_definition_t
-  --, stylesheet  in CT_Stylesheet
+    sd  in out nocopy sheet_definition_t
   )
   is
-    columnId pls_integer;
+    columnId  pls_integer;
   begin
-    columnId := sheetDef.columnLinkMap.first;
-    while columnId is not null loop
-      
-      prepareHyperlink(sheetDef.columnLinkMap(columnId), columnId, sheetDef.sqlMetadata.columnList);
-    
-      columnId := sheetDef.columnLinkMap.next(columnId);
+    for i in 1 .. sd.tableList.count loop     
+      columnId := sd.tableList(i).columnLinkMap.first;
+      while columnId is not null loop       
+        prepareHyperlink(sd.tableList(i).columnLinkMap(columnId), columnId, sd.tableList(i).sqlMetadata.columnList);     
+        columnId := sd.tableList(i).columnLinkMap.next(columnId);
+      end loop;
     end loop;
   end;
 
@@ -1300,7 +1376,7 @@ create or replace package body ExcelGen is
         columnId := link.tokens.next(columnId);
       end loop;
     end if;
-    dbms_output.put_line(fmla);
+    debug(fmla);
     return fmla;
   end;
 
@@ -1484,10 +1560,11 @@ create or replace package body ExcelGen is
   function getColumnList (
     p_cursor_number  in integer
   , p_excludeSet     in int_set_t
+  , p_offset         in pls_integer
   )
   return column_list_t
   is
-    baseColumnList  dbms_sql.desc_tab2;
+    baseColumnList  dbms_sql.desc_tab3;
     columnCount     integer;
     data            data_t;
     columnList      column_list_t := column_list_t();
@@ -1495,7 +1572,7 @@ create or replace package body ExcelGen is
     columnItem      column_t;
     columnId        pls_integer := 0;
   begin
-    dbms_sql.describe_columns2(p_cursor_number, columnCount, baseColumnList);
+    dbms_sql.describe_columns3(p_cursor_number, columnCount, baseColumnList);
     
     for i in 1 .. columnCount loop
       
@@ -1523,9 +1600,13 @@ create or replace package body ExcelGen is
       when dbms_sql.CLOB_TYPE then
         dbms_sql.define_column(p_cursor_number, i, data.clob_value);
         columnItem.supertype := ST_LOB;
-      when dbms_sql.BINARY_DOUBLE_TYPE then
-        dbms_sql.define_column(p_cursor_number, i, data.number_value);
-        columnItem.supertype := ST_NUMBER;
+      when dbms_sql.USER_DEFINED_TYPE then
+        if baseColumnList(i).col_type_name = 'ANYDATA' then
+          dbms_sql.define_column(p_cursor_number, i, data.anydata_value);
+          columnItem.supertype := ST_VARIANT;
+        else
+          error('Unsupported data type: %d [%s], for column "%s"', baseColumnList(i).col_type, baseColumnList(i).col_type_name, baseColumnList(i).col_name);
+        end if;
       else
         error('Unsupported data type: %d, for column "%s"', baseColumnList(i).col_type, baseColumnList(i).col_name);
       end case;
@@ -1539,7 +1620,8 @@ create or replace package body ExcelGen is
       if not columnItem.excluded then
         columnId := columnId + 1;
         columnItem.id := columnId;
-        columnItem.colRef := base26encode(columnId);
+        columnItem.colNum := p_offset - 1 + columnId;
+        columnItem.colRef := base26encode(columnItem.colNum);
       end if; 
       
       columnList.extend;
@@ -1551,7 +1633,8 @@ create or replace package body ExcelGen is
   end;
 
   procedure prepareCursor (
-    meta  in out nocopy sql_metadata_t
+    meta       in out nocopy sql_metadata_t
+  , colOffset  in pls_integer
   )
   is
     result      integer;
@@ -1585,7 +1668,7 @@ create or replace package body ExcelGen is
       
     end if;
     
-    meta.columnList := getColumnList(meta.cursorNumber, meta.excludeSet);
+    meta.columnList := getColumnList(meta.cursorNumber, meta.excludeSet, colOffset);
     
     for i in 1 .. meta.columnList.count loop
       meta.columnMap(meta.columnList(i).name) := i;
@@ -1593,7 +1676,147 @@ create or replace package body ExcelGen is
         meta.visibleColumnSet(i) := meta.columnList(i).colRef;
       end if;
     end loop;
+    
+  end;
 
+  procedure prepareNumberValue (data in out nocopy data_t, v in number)
+  is
+  begin
+    data.st := ST_NUMBER;
+    data.db_type := dbms_sql.NUMBER_TYPE;
+    data.number_value := v;
+    data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
+  end;
+
+  procedure prepareStringValue (data in out nocopy data_t, v in varchar2)
+  is
+  begin
+    data.st := ST_STRING;
+    data.db_type := dbms_sql.VARCHAR2_TYPE;
+    data.varchar2_value := stripXmlControlChars(v);
+  end;
+
+  procedure prepareDateValue (data in out nocopy data_t, v in date)
+  is
+  begin
+    data.st := ST_DATETIME;
+    data.db_type := dbms_sql.DATE_TYPE;
+    data.date_value := v;
+    data.number_value := toOADate(dt => data.date_value);
+    data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
+  end;
+
+  procedure prepareTimestampValue (data in out nocopy data_t, v in timestamp_unconstrained)
+  is
+  begin
+    data.st := ST_DATETIME;
+    data.db_type := dbms_sql.TIMESTAMP_TYPE;
+    data.ts_value := timestampRound(v, 3);
+    data.number_value := toOADate(ts => data.ts_value);
+    data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
+  end;
+
+  procedure prepareTimestampTzValue (data in out nocopy data_t, v in timestamp_tz_unconstrained)
+  is
+  begin
+    data.st := ST_DATETIME;
+    data.db_type := dbms_sql.TIMESTAMP_WITH_TZ_TYPE;
+    data.tstz_value := timestampRound(v, 3);
+    data.number_value := toOADate(ts => data.tstz_value);
+    data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
+  end;
+
+  procedure prepareData (
+    data  in out nocopy data_t
+  , v     in anydata
+  ) 
+  is
+  begin
+    case v.GetTypeName()
+    when 'SYS.NUMBER' then
+      prepareNumberValue(data, v.AccessNumber());
+    when 'SYS.VARCHAR2' then
+      prepareStringValue(data, v.AccessVarchar2());
+    when 'SYS.CHAR' then
+      prepareStringValue(data, rtrim(v.AccessChar()));
+    when 'SYS.DATE' then
+      prepareDateValue(data, v.AccessDate());
+    when 'SYS.TIMESTAMP' then
+      prepareTimestampValue(data, v.AccessTimestamp());
+    when 'SYS.TIMESTAMP_WITH_TIMEZONE' then
+      prepareTimestampTzValue(data, v.AccessTimestampTZ());
+    when 'SYS.CLOB' then
+      data.db_type := dbms_sql.CLOB_TYPE;
+      data.clob_value := v.AccessClob();
+      data.st := ST_LOB;
+    else
+      error('Unsupported data type: ''%s''', v.GetTypeName());
+    end case;
+  end;
+
+  function getSqlData (
+    sqlMeta  sql_metadata_t
+  )
+  return data_map_t
+  is
+    data     data_t;
+    dataMap  data_map_t;
+  begin
+
+    for i in 1 .. sqlMeta.columnList.count loop
+                    
+      data := null;
+      data.st := sqlMeta.columnList(i).supertype;
+      data.db_type := sqlMeta.columnList(i).type;
+
+      case data.db_type
+      when dbms_sql.VARCHAR2_TYPE then
+        dbms_sql.column_value(sqlMeta.cursorNumber, i, data.varchar2_value);
+        data.varchar2_value := stripXmlControlChars(data.varchar2_value);
+            
+      when dbms_sql.CHAR_TYPE then
+        dbms_sql.column_value_char(sqlMeta.cursorNumber, i, data.char_value);
+        data.varchar2_value := stripXmlControlChars(rtrim(data.char_value));
+            
+      when dbms_sql.NUMBER_TYPE then
+        dbms_sql.column_value(sqlMeta.cursorNumber, i, data.number_value);
+        if sqlMeta.columnList(i).scale between -84 and 0 then
+          data.varchar2_value := to_char(data.number_value);
+        else
+          data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
+        end if;
+            
+      when dbms_sql.DATE_TYPE then
+        dbms_sql.column_value(sqlMeta.cursorNumber, i, data.date_value);
+        data.number_value := toOADate(dt => data.date_value);
+        data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
+            
+      when dbms_sql.TIMESTAMP_TYPE then
+        dbms_sql.column_value(sqlMeta.cursorNumber, i, data.ts_value);
+        data.ts_value := timestampRound(data.ts_value, 3);
+        data.number_value := toOADate(ts => data.ts_value);
+        data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
+            
+      when dbms_sql.TIMESTAMP_WITH_TZ_TYPE then
+        dbms_sql.column_value(sqlMeta.cursorNumber, i, data.tstz_value);
+        data.tstz_value := timestampRound(data.tstz_value, 3);
+        data.number_value := toOADate(ts => data.tstz_value);
+        data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
+            
+      when dbms_sql.CLOB_TYPE then
+        dbms_sql.column_value(sqlMeta.cursorNumber, i, data.clob_value);
+        
+      when dbms_sql.USER_DEFINED_TYPE then -- should be ANYDATA
+        dbms_sql.column_value(sqlMeta.cursorNumber, i, data.anydata_value);
+        prepareData(data, data.anydata_value);
+      end case;
+          
+      dataMap(i) := data;
+          
+    end loop;
+    
+    return dataMap;
+    
   end;
 
   function getRelativePath (
@@ -1661,6 +1884,34 @@ create or replace package body ExcelGen is
     return output;
 
   end;  
+
+  function getTableForest (tableList in tableList_t) return tableForest_t
+  is
+    f              tableForest_t;
+    anchorTableId  pls_integer;
+    
+    procedure push (list in out nocopy intList_t, v in pls_integer) is
+    begin
+      list.extend;
+      list(list.last) := v;
+    end;
+    
+  begin
+    f.roots := intList_t();
+  
+    for i in 1 .. tableList.count loop
+      f.t(i).nodeId := i;
+      f.t(i).children := intList_t();
+      anchorTableId := tableList(i).anchorRef.tableId;
+      if anchorTableId is not null then
+        push(f.t(anchorTableId).children, i);
+      else
+        push(f.roots, i);
+      end if;
+    end loop;
+    
+    return f;
+  end;
 
   procedure addPart (
     ctx   in out nocopy context_t
@@ -1759,41 +2010,19 @@ create or replace package body ExcelGen is
     end if;
   end;
 
-  /*
-  procedure addSheet (
-    ctx      in out nocopy context_t
-  , name     in varchar2
-  , content  in clob
-  , autoFilterRange  in range_t default null
-  )
-  is
-    sheet     CT_Sheet;
-    i         pls_integer;
-  begin
-    ctx.workbook.sheets.extend;
-    i := ctx.workbook.sheets.last;
-    sheet.partName := 'xl/worksheets/sheet'||to_char(i)||'.xml';
-    sheet.name := name;
-    sheet.sheetId := i;
-    if autoFilterRange.expr is not null then
-      sheet.filterRange := autoFilterRange;
-      ctx.workbook.hasDefinedNames := true;
-    end if;
-    ctx.workbook.sheets(i) := sheet;
-    addPart(ctx, sheet.partName, MT_WORKSHEET, content);
-  end;
-  */
-
-  function addTable (
+  function addTableLayout (
     ctx              in out nocopy context_t
   , tableRange       in range_t
   , showHeader       in boolean
   , tableAutoFilter  in boolean
   , tableStyleName   in varchar2
-  --, columnList       in column_list_t
-  , columnMap        in sheet_column_map_t
+  , columnMap        in table_column_map_t
   , tableName        in varchar2 default null
   , isEmpty          in boolean default false
+  , showFirstColumn    in boolean
+  , showLastColumn     in boolean
+  , showRowStripes     in boolean
+  , showColumnStripes  in boolean
   )
   return pls_integer
   is
@@ -1811,20 +2040,18 @@ create or replace package body ExcelGen is
     tab.showHeader := nvl(showHeader, false);
     tab.autoFilter := nvl(tableAutoFilter, false);
     tab.styleName := tableStyleName;
+    tab.showFirstColumn := nvl(showFirstColumn, false);
+    tab.showLastColumn := nvl(showLastColumn, false);
+    tab.showRowStripes := nvl(showRowStripes, true);
+    tab.showColumnStripes := nvl(showColumnStripes, false);
+    
     tab.partName := 'xl/tables/table'||to_char(tab.id)
                                      ||case when ctx.fileType = FILE_XLSB then '.bin' else '.xml' end;
     tab.cols := CT_TableColumns();
-    /*
-    tab.cols.extend(columnList.count);
-    for i in 1 .. columnList.count loop
-      tab.cols(i).id := i;
-      tab.cols(i).name := columnList(i).name;
-    end loop;
-    */
     tab.cols.extend(columnMap.count);
     for i in 1 .. columnMap.count loop
       tab.cols(i).id := i;
-      tab.cols(i).name := columnMap(i).header;
+      tab.cols(i).name := columnMap(i).name;
     end loop;
     
     ctx.workbook.tables(tab.id) := tab;
@@ -1884,8 +2111,7 @@ create or replace package body ExcelGen is
     styles  in out nocopy CT_Stylesheet
   )
   is
-    styleXfId   pls_integer;
-    xfId         pls_integer;
+    styleXfId    pls_integer;
     defaultFont  CT_Font := styles.fonts(0);
     hlinkFont    CT_Font;
   begin
@@ -1985,7 +2211,7 @@ create or replace package body ExcelGen is
     
     stream_write(stream, '</styleSheet>');
     stream_flush(stream);
-    debug(xmltype(stream.content).getstringval(1,2));
+    --debug(xmltype(stream.content).getstringval(1,2));
     addPart(ctx, partName, MT_STYLES, stream.content);
     
   end;
@@ -2135,28 +2361,172 @@ create or replace package body ExcelGen is
       addPart(ctx, 'xl/sharedStrings.bin', MT_SHAREDSTRINGS_BIN, stream.content);
     end if;
   end;
+
+  procedure writeRowStart (
+    stream  in out nocopy stream_t
+  , r       in row_t
+  )
+  is
+  begin
+    stream_write(stream, '<row r="'||to_char(r.id)||'"'
+                        ||case when r.props.xfId is not null then ' s="'||to_char(r.props.xfId)||'" customFormat="1"' end
+                        ||case when r.props.height is not null then ' ht="'||to_char(r.props.height, 'TM9', NLS_PARAM_STRING)||'" customHeight="1"' end
+                        ||'>');
+  end;
+
+  procedure writeRowBin (
+    stream         in out nocopy xutl_xlsb.stream_t
+  , r              in row_t
+  , defaultHeight  in number
+  )
+  is
+  begin
+    xutl_xlsb.put_RowHdr(stream
+                       , rowIndex => r.id - 1
+                       , height   => r.props.height
+                       , styleRef => r.props.xfId
+                       , defaultHeight => defaultHeight
+                       );
+  end;
+  
+  procedure writeCell (
+    ctx     in out nocopy context_t
+  , stream  in out nocopy stream_t
+  , cell    in cell_t
+  )
+  is
+    cellRef  varchar2(10) := cell.c||to_char(cell.r);
+    sst_idx  pls_integer;
+    --hasLink  boolean := ( cell.link.target is not null );
+  begin
+
+    case cell.v.st
+    when ST_STRING then
+      if cell.v.varchar2_value is not null then
+          sst_idx := put_string(ctx, cell.v.varchar2_value);
+          stream_write(stream, '<c r="'||cellRef
+              ||case when cell.xfId != 0 then '" s="'||to_char(cell.xfId) end
+              ||'" t="s"><v>'||to_char(sst_idx - 1)||'</v></c>');
+      end if;
+              
+    when ST_NUMBER then
+      stream_write(stream, '<c r="'||cellRef
+          ||case when cell.xfId != 0 then '" s="'||to_char(cell.xfId) end
+          ||'"><v>'||cell.v.varchar2_value||'</v></c>');
+              
+    when ST_DATETIME then
+      stream_write(stream, '<c r="'||cellRef||'" s="'||to_char(cell.xfId)||'"><v>'||cell.v.varchar2_value||'</v></c>');
+              
+    when ST_LOB then      
+      if cell.v.clob_value is not null and dbms_lob.getlength(cell.v.clob_value) != 0 then
+        -- try conversion to VARCHAR2
+        begin
+          --cell.v.varchar2_value := to_char(cell.v.clob_value);
+          sst_idx := put_string(ctx, stripXmlControlChars(to_char(cell.v.clob_value)));
+          stream_write(stream, '<c r="'||cellRef
+              ||case when cell.xfId != 0 then '" s="'||to_char(cell.xfId) end
+              ||'" t="s"><v>'||to_char(sst_idx - 1)||'</v></c>');
+        exception
+          when value_error then
+            -- stream CLOB content as inlineStr, up to 32767 chars
+            stream_write(stream, '<c r="'||cellRef
+                ||case when cell.xfId != 0 then '" s="'||to_char(cell.xfId) end
+                ||'" t="inlineStr"><is><t>');
+            stream_write_clob(stream, cell.v.clob_value, 32767, true);
+            stream_write(stream, '</t></is></c>');
+        end;
+      end if;
+              
+    end case;
+        
+  end;
+
+  procedure writeCellBin (
+    ctx     in out nocopy context_t
+  , stream  in out nocopy xutl_xlsb.stream_t
+  , cell    in cell_t
+  )
+  is
+    sst_idx  pls_integer;
+  begin
+
+    case cell.v.st
+    when ST_STRING then
+      if cell.v.varchar2_value is not null then
+          sst_idx := put_string(ctx, cell.v.varchar2_value);
+          xutl_xlsb.put_CellIsst(stream, cell.cn-1, cell.xfId, sst_idx-1);
+      end if;
+              
+    when ST_NUMBER then
+      xutl_xlsb.put_CellNumber(stream, cell.cn-1, cell.xfId, cell.v.number_value);
+              
+    when ST_DATETIME then
+      xutl_xlsb.put_CellNumber(stream, cell.cn-1, cell.xfId, cell.v.number_value);
+              
+    when ST_LOB then      
+      if cell.v.clob_value is not null and dbms_lob.getlength(cell.v.clob_value) != 0 then
+        -- try conversion to VARCHAR2
+        begin
+          sst_idx := put_string(ctx, to_char(cell.v.clob_value));
+          xutl_xlsb.put_CellIsst(stream, cell.cn-1, cell.xfId, sst_idx-1);
+        exception
+          when value_error then
+            -- stream CLOB content as an inline string, up to 32767 chars
+            xutl_xlsb.put_CellSt(stream, cell.cn-1, cell.xfId, lobValue => cell.v.clob_value);
+        end;
+      end if;
+              
+    end case;
+        
+  end;
+
+  procedure setAnchorRowOffset (sd in sheet_definition_t, anchorRef in out nocopy anchorRef_t) is
+    anchorTable         table_t;
+    anchorTableRowSpan  pls_integer;
+  begin
+    if anchorRef.tableId is not null then
+      anchorTable := sd.tableList(anchorRef.tableId);
+      if anchorRef.anchorPosition in (BOTTOM_LEFT,BOTTOM_RIGHT) then
+        anchorTableRowSpan := anchorTable.range.end_ref.r - anchorTable.range.start_ref.r + 1;
+        anchorRef.rowOffset := anchorTable.anchorRef.rowOffset + anchorTableRowSpan - 1 + anchorRef.rowOffset;
+      elsif anchorRef.anchorPosition in (TOP_LEFT,TOP_RIGHT) then
+        anchorRef.rowOffset := anchorTable.anchorRef.rowOffset + anchorRef.rowOffset;
+      end if;
+    end if;
+  end;
+
+  procedure setAnchorColOffset (sd in sheet_definition_t, anchorRef in out nocopy anchorRef_t) is
+    anchorTable         table_t;
+    anchorTableColSpan  pls_integer;
+  begin
+    if anchorRef.tableId is not null then
+      anchorTable := sd.tableList(anchorRef.tableId);
+      if anchorRef.anchorPosition in (TOP_RIGHT,BOTTOM_RIGHT) then
+        anchorTableColSpan := anchorTable.sqlMetadata.visibleColumnSet.count;
+        anchorRef.colOffset := anchorTable.anchorRef.colOffset + anchorTableColSpan - 1 + anchorRef.colOffset;
+      elsif anchorRef.anchorPosition in (TOP_LEFT,BOTTOM_LEFT) then
+        anchorRef.colOffset := anchorTable.anchorRef.colOffset + anchorRef.colOffset;
+      end if;
+    end if;
+  end;
   
   procedure createWorksheetImpl (
     ctx  in out nocopy context_t
   , sd   in out nocopy sheet_definition_t
   )
   is
-    data            data_t;
-    r               data_row_t;               
-    nrows           integer;
-    rowIdx          integer := 0;
-    isEmpty         boolean := true;
-    cellRef         varchar2(10);
-    sst_idx         pls_integer;
     stream          stream_t;
-    
+    dataMap         data_map_t;
+    t               table_t;
+    nrows           integer;
+    rowIdx          pls_integer;
+    colIdx          pls_integer;
     columnId        pls_integer;
-    columnHeader    varchar2(256);
-    
-    cellXfId        pls_integer;
-    cellHasLink     boolean;
-
-    sheetRange      range_t;
+    --cellHasLink     boolean;
+    r               row_t;
+    cell            cell_t;
+    cell2           floatingCell_t;
+    cellSpan        cellSpan_t;
     tableId         pls_integer;
     rId             varchar2(256);
     
@@ -2166,247 +2536,327 @@ create or replace package body ExcelGen is
     partitionStart  pls_integer;
     partitionStop   pls_integer;
     
-    link            link_t;
+    isSheetEmpty    boolean := true;
+    headerXfId      pls_integer;
+    --link            link_t;
     
+    /*
     function makeHyperlinkCellContent (columnId in pls_integer, strValue in varchar2) return varchar2 is
     begin
       return '<c r="'||cellRef||'" '
-                     ||case when sd.sqlMetadata.columnList(columnId).supertype = ST_STRING then 't="str" ' end
+                     ||case when t.sqlMetadata.columnList(columnId).supertype = ST_STRING then 't="str" ' end
                      ||'s="'||to_char(cellXfId)||'"><f>'
-                     ||dbms_xmlgen.convert(makeHyperlinkFormula(link, rowIdx, columnId, sd.sqlMetadata.columnList, r.dataMap))
+                     ||dbms_xmlgen.convert(makeHyperlinkFormula(link, rowIdx, columnId, t.sqlMetadata.columnList, r.dataMap))
                      ||'</f><v>'||dbms_xmlgen.convert(strValue)||'</v></c>' ;
     end;
+    */
     
   begin
-
-    -- prefetch
-    nrows := dbms_sql.fetch_rows(sd.sqlMetadata.cursorNumber);
     
-    if nrows != 0 or ( nrows = 0 and sd.sqlMetadata.partitionId = 0 ) then
+    sheet.tableParts := CT_TableParts();
+    
+    stream := new_stream(); 
+    stream_write(stream, '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">');
       
-      isEmpty := (nrows = 0);
-      stream := new_stream();  
-      stream_write(stream, '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">');
-      
-      if sd.tabColor is not null then
-        stream_write(stream, '<sheetPr><tabColor rgb="'||sd.tabColor||'"/></sheetPr>');
+    if sd.tabColor is not null then
+      stream_write(stream, '<sheetPr><tabColor rgb="'||sd.tabColor||'"/></sheetPr>');
+    end if;
+    
+    if sd.hasProps then
+      stream_write(stream, 
+      '<sheetViews><sheetView workbookViewId="0"' ||
+                 case when not sd.showGridLines then ' showGridLines="0"' end ||
+                 case when not sd.showRowColHeaders then ' showRowColHeaders="0"' end || '>');
+      if sd.activePaneAnchorRef.value is not null then
+        stream_write(stream, 
+        '<pane xSplit="'||to_char(sd.activePaneAnchorRef.cn - 1)||'" '||
+              'ySplit="'||to_char(sd.activePaneAnchorRef.r - 1)||'" '||
+              'topLeftCell="'||sd.activePaneAnchorRef.value||'" activePane="bottomLeft" state="frozen"/>');
       end if;
+      stream_write(stream, '</sheetView></sheetViews>');
+    end if;
+    
+    -- sheetFormatPr
+    if sd.defaultRowHeight is not null then
+      stream_write(stream, '<sheetFormatPr defaultRowHeight="'||to_char(sd.defaultRowHeight,'TM9',NLS_PARAM_STRING)||'" customHeight="1"/>');
+    end if;
       
-      if sd.header.show and sd.header.isFrozen then
-        stream_write(stream, '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>');
-      end if;
+    -- columns
+    if sd.hasCustomColProps and sd.columnMap.count != 0 then
+      stream_write(stream, '<cols>');
       
-      -- columns
-      if sd.customColWidth and sd.columnMap.count != 0 then
-        stream_write(stream, '<cols>');
-        for i in 1 .. sd.columnMap.count loop
-          if sd.columnMap(i).width is not null then
-            stream_write(stream, '<col min="'||to_char(i)||'" max="'||to_char(i)||'" width="'||to_char(getColumnWidth(sd.columnMap(i).width),'TM9',NLS_PARAM_STRING)||'" customWidth="1"/>');
-          end if;
-        end loop;
-        stream_write(stream, '</cols>');
-      end if;
+      columnId := sd.columnMap.first;
+      while columnId is not null loop
+        stream_write(stream, '<col min="'||to_char(columnId)||'"'||
+                                 ' max="'||to_char(columnId)||'"'||
+                                 ' width="'||to_char(getColumnWidth(nvl(sd.columnMap(columnId).width, DEFAULT_COL_WIDTH)),'TM9',NLS_PARAM_STRING)||'"'
+                                           || case when sd.columnMap(columnId).width is not null then ' customWidth="1"' end ||
+                                 case when sd.columnMap(columnId).xfId is not null then
+                                 ' style="'||to_char(sd.columnMap(columnId).xfId)||'"'
+                                 end || 
+                              '/>');
+        columnId := sd.columnMap.next(columnId);
+      end loop;
       
-      stream_write(stream, '<sheetData>');
+      stream_write(stream, '</cols>');
+    end if;
+    
+    -- BEGIN sheetData
+    stream_write(stream, '<sheetData>');
+    
+    for tId in 1 .. sd.tableList.count loop
+      
+      t := sd.tableList(tId);  
+      setAnchorRowOffset(sd, t.anchorRef);
+      r.id := t.anchorRef.rowOffset - 1;
+      cell.r := r.id;
       
       -- header row
-      if sd.header.show then
-        rowIdx := rowIdx + 1;
-        stream_write(stream, '<row r="'||to_char(rowIdx)||'">');
-        for i in 1 .. sd.sqlMetadata.columnList.count loop
-          if not sd.sqlMetadata.columnList(i).excluded then
-            columnId := sd.sqlMetadata.columnList(i).id;
-            columnHeader := sd.columnMap(columnId).header;
-            sst_idx := put_string(ctx, columnHeader);
+      if t.header.show then
+        r.id := r.id + 1;
+        -- common cell attributes 
+        cell.r := r.id;
+        --cell.xfId := nvl(t.header.xfId, 0);
+        if t.rowMap.exists(0) and t.rowMap(0).xfId is not null then
+          headerXfId := t.rowMap(0).xfId;
+        else
+          headerXfId := 0;
+        end if;
+        
+        cell.v.st := ST_STRING;
+        
+        if sd.streamable then
+          writeRowStart(stream, r);
+        end if;
+        
+        for i in 1 .. t.sqlMetadata.columnList.count loop
+          if not t.sqlMetadata.columnList(i).excluded then
+            columnId := t.sqlMetadata.columnList(i).id;
+            cell.cn := t.sqlMetadata.columnList(i).colNum;
+            cell.c := t.sqlMetadata.columnList(i).colRef;
+            cell.v.varchar2_value := t.columnMap(columnId).name;
             
-            cellRef := sd.sqlMetadata.columnList(i).colRef||to_char(rowIdx);
-            stream_write(stream, '<c r="'||cellRef||'" t="s"'||
-                                 case when sd.header.xfId is not null then ' s="'||to_char(sd.header.xfId)||'"' end || 
-                                 '><v>'||to_char(sst_idx - 1)||'</v></c>');
+            cell.xfId := headerXfId;
+            -- sheet-level column idx
+            colIdx := t.anchorRef.colOffset - 1 + columnId;
+            if sd.columnMap.exists(colIdx) and sd.columnMap(colIdx).xfId is not null then
+              cell.xfId := mergeCellStyle(ctx, sd.columnMap(colIdx).xfId, cell.xfId);
+            end if;
+            
+            if sd.streamable then
+              writeCell(ctx, stream, cell);
+            else
+              sd.data.rows(cell.r).cells(cell.cn) := cell;
+            end if;
+            
           end if;
         end loop;
-        stream_write(stream, '</row>');
+        
+        if sd.streamable then
+          stream_write(stream, '</row>');
+        end if;
+        
       end if;
       
-      partitionStart := sd.sqlMetadata.r_num + nrows;
-      partitionStop := partitionStart + sd.sqlMetadata.partitionSize - 1;
+      -- prefetch
+      nrows := dbms_sql.fetch_rows(t.sqlMetadata.cursorNumber);
+      t.isEmpty := (nrows = 0);
       
-      -- data rows
+      partitionStart := t.sqlMetadata.r_num + nrows;
+      partitionStop := partitionStart + t.sqlMetadata.partitionSize - 1;
+      
+      --if nrows != 0 or ( nrows = 0 and t.sqlMetadata.partitionId = 0 ) then 
+      isSheetEmpty := t.isEmpty and t.sqlMetadata.partitionId != 0;
+      
       while nrows != 0 loop
         
-        rowIdx := rowIdx + 1;
-        stream_write(stream, '<row r="'||to_char(rowIdx)||'">');
+        r.id := r.id + 1;
+        cell.r := r.id;
         
-        r.dataMap.delete;
+        t.sqlMetadata.r_num := t.sqlMetadata.r_num + 1;
+        
+        if sd.streamable then
+          writeRowStart(stream, r);
+        end if;
+        
         -- read current row
-        for i in 1 .. sd.sqlMetadata.columnList.count loop
-                    
-          data := null;
+        dataMap := getSqlData(t.sqlMetadata);
+        for i in 1 .. t.sqlMetadata.columnList.count loop
+          
+          if not t.sqlMetadata.columnList(i).excluded then
+          
+            cell.v := dataMap(i);
+            cell.cn := t.sqlMetadata.columnList(i).colNum;
+            cell.c := t.sqlMetadata.columnList(i).colRef;
+            
+            cell.xfId := t.sqlMetadata.columnList(i).xfId;
 
-          case sd.sqlMetadata.columnList(i).type
-          when dbms_sql.VARCHAR2_TYPE then
-            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.varchar2_value);
-            data.varchar2_value := stripXmlControlChars(data.varchar2_value);
+            -- if original SQL type is ANYDATA, and actual value is numeric or datetime, apply default format
+            if t.sqlMetadata.columnList(i).supertype = ST_VARIANT and cell.v.st in (ST_NUMBER, ST_DATETIME) then
+              cell.xfId := mergeCellFormat(ctx, cell.xfId, getDefaultFormat(ctx, sd, cell.v.db_type));
+            end if;
+
+            -- merge row-level style
+            if t.rowMap.exists(t.sqlMetadata.r_num) and t.rowMap(t.sqlMetadata.r_num).xfId is not null then
+              cell.xfId := mergeCellStyle(ctx, t.rowMap(t.sqlMetadata.r_num).xfId, cell.xfId);
+            end if;
             
-          when dbms_sql.CHAR_TYPE then
-            dbms_sql.column_value_char(sd.sqlMetadata.cursorNumber, i, data.char_value);
-            data.varchar2_value := stripXmlControlChars(rtrim(data.char_value));
-            
-          when dbms_sql.NUMBER_TYPE then
-            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.number_value);
-            if sd.sqlMetadata.columnList(i).scale between -84 and 0 then
-              data.varchar2_value := to_char(data.number_value);
+            if sd.streamable then
+              writeCell(ctx, stream, cell);
             else
-              data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
+              sd.data.rows(cell.r).cells(cell.cn) := cell;
             end if;
-            
-          when dbms_sql.DATE_TYPE then
-            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.date_value);
-            data.number_value := toOADate(dt => data.date_value);
-            data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
-            
-          when dbms_sql.TIMESTAMP_TYPE then
-            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.ts_value);
-            data.ts_value := timestampRound(data.ts_value, 3);
-            data.number_value := toOADate(ts => data.ts_value);
-            data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
-            
-          when dbms_sql.TIMESTAMP_WITH_TZ_TYPE then
-            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.tstz_value);
-            data.tstz_value := timestampRound(data.tstz_value, 3);
-            data.number_value := toOADate(ts => data.tstz_value);
-            data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
-            
-          when dbms_sql.CLOB_TYPE then      
-            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.clob_value);
-          
-          when dbms_sql.BINARY_DOUBLE_TYPE then
-            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.number_value);
-            data.varchar2_value := to_char(data.number_value);
-            
-          end case;
-          
-          r.dataMap(i) := data;
-          
-        end loop;
-
-        for i in 1 .. sd.sqlMetadata.columnList.count loop
-          
-          if not sd.sqlMetadata.columnList(i).excluded then
-          
-            data := r.dataMap(i);
-            
-            cellRef := sd.sqlMetadata.columnList(i).colRef||to_char(rowIdx);
-            cellXfId := sd.sqlMetadata.columnList(i).xfId;
-            
-            cellHasLink := sd.sqlMetadata.columnList(i).hasLink;
-            if cellHasLink then
-              link := sd.sqlMetadata.columnList(i).link;
-            end if;
-            
-            case sd.sqlMetadata.columnList(i).supertype
-            when ST_STRING then
-              if data.varchar2_value is not null then
-                if not cellHasLink then
-                  sst_idx := put_string(ctx, data.varchar2_value);
-                  stream_write(stream, '<c r="'||cellRef
-                      ||case when cellXfId != 0 then '" s="'||to_char(cellXfId) end
-                      ||'" t="s"><v>'||to_char(sst_idx - 1)||'</v></c>');
-                else
-                  stream_write(stream, makeHyperlinkCellContent(i, escapeQuote(data.varchar2_value)));
-                end if;
-              end if;
-              
-            when ST_NUMBER then
-              if not cellHasLink then
-                stream_write(stream, '<c r="'||cellRef
-                    ||case when cellXfId != 0 then '" s="'||to_char(cellXfId) end
-                    ||'"><v>'||data.varchar2_value||'</v></c>');
-              else
-                stream_write(stream, makeHyperlinkCellContent(i, data.varchar2_value));
-              end if;
-
-            when ST_DATETIME then
-              if not cellHasLink then
-                stream_write(stream, '<c r="'||cellRef||'" s="'||to_char(cellXfId)||'"><v>'||data.varchar2_value||'</v></c>');
-              else
-                stream_write(stream, makeHyperlinkCellContent(i, data.varchar2_value));
-              end if;
-              
-            when ST_LOB then      
-              if data.clob_value is not null and dbms_lob.getlength(data.clob_value) != 0 then
-                -- try conversion to VARCHAR2
-                begin
-                  data.varchar2_value := to_char(data.clob_value);
-                  sst_idx := put_string(ctx, stripXmlControlChars(data.varchar2_value));
-                  stream_write(stream, '<c r="'||cellRef
-                      ||case when cellXfId != 0 then '" s="'||to_char(cellXfId) end
-                      ||'" t="s"><v>'||to_char(sst_idx - 1)||'</v></c>');
-                exception
-                  when value_error then
-                    -- stream CLOB content as inlineStr, up to 32767 chars
-                    stream_write(stream, '<c r="'||cellRef
-                        ||case when cellXfId != 0 then '" s="'||to_char(cellXfId) end
-                        ||'" t="inlineStr"><is><t>');
-                    stream_write_clob(stream, data.clob_value, 32767, true);
-                    stream_write(stream, '</t></is></c>');
-                end;
-              end if;
-              
-            end case;
           
           end if;
           
         end loop;
         
-        stream_write(stream, '</row>');
+        if sd.streamable then
+          stream_write(stream, '</row>');
+        end if;
         
-        sd.sqlMetadata.r_num := sd.sqlMetadata.r_num + 1;
-        
-        if rowIdx = MAX_ROW_NUMBER then
-          if not sd.sqlMetadata.partitionBySize then
+        --t.sqlMetadata.r_num := t.sqlMetadata.r_num + 1;
+
+        if cell.r = MAX_ROW_NUMBER then
+          if not t.sqlMetadata.partitionBySize then
             -- force closing cursor
             nrows := 0;
           end if;
           exit;
         end if;
         
-        exit when sd.sqlMetadata.r_num = partitionStop;
+        exit when t.sqlMetadata.r_num = partitionStop;
         
         -- fetch next row
-        nrows := dbms_sql.fetch_rows(sd.sqlMetadata.cursorNumber);
-          
+        nrows := dbms_sql.fetch_rows(t.sqlMetadata.cursorNumber);
+      
       end loop;
       
       debug('end fetch');
-               
-      stream_write(stream, '</sheetData>');
       
-      sheetRange := makeRange(sd.sqlMetadata.columnList(sd.sqlMetadata.visibleColumnSet.first).colRef
-                            , 1
-                            , sd.sqlMetadata.columnList(sd.sqlMetadata.visibleColumnSet.last).colRef
-                            , rowIdx);
+      if nrows = 0 then
+        debug('close cursor');
+        dbms_sql.close_cursor(t.sqlMetadata.cursorNumber);
+        sd.done := true;
+      end if;
       
-      -- autoFilter
-      if sd.header.show and sd.header.autoFilter then
-        if not sd.formatAsTable then
-          sheet.filterRange := sheetRange;
+      t.range := makeRange(t.sqlMetadata.columnList(t.sqlMetadata.visibleColumnSet.first).colRef
+                         , t.anchorRef.rowOffset
+                         , t.sqlMetadata.columnList(t.sqlMetadata.visibleColumnSet.last).colRef
+                         , cell.r);
+    
+      if t.formatAsTable and not isSheetEmpty then
+        tableId := addTableLayout(ctx, t.range, t.header.show, t.header.autoFilter, t.tableStyle, t.columnMap, null, t.isEmpty
+                                 , t.showFirstColumn, t.showLastColumn, t.showRowStripes, t.showColumnStripes);
+        sheet.tableParts.extend;
+        sheet.tableParts(sheet.tableParts.last) := tableId;
+      end if;
+      
+      sd.tableList(tId) := t;
+
+    end loop;
+    
+    -- resolve floating cells
+    for i in 1 .. sd.floatingCells.count loop
+      cell2 := sd.floatingCells(i);
+      setAnchorRowOffset(sd, cell2.anchorRef);
+      setAnchorColOffset(sd, cell2.anchorRef);
+      
+      cell.r := cell2.anchorRef.rowOffset;
+      cell.cn := cell2.anchorRef.colOffset;
+      cell.c := base26encode(cell.cn);
+      cell.xfId := cell2.xfId;    
+      cell.v := cell2.data;
+      sd.data.rows(cell.r).id := cell.r;
+      sd.data.rows(cell.r).cells(cell.cn) := cell;
+    end loop;
+    
+    -- write in-memory cells
+    if sd.data.rows.count != 0 then
+      rowIdx := sd.data.rows.first;
+      while rowIdx is not null loop
+
+        if sd.data.rows(rowIdx).id is null then
+          sd.data.rows(rowIdx).id := rowIdx;
+        end if;
+        
+        writeRowStart(stream, sd.data.rows(rowIdx));
+        
+        -- cells 
+        colIdx := sd.data.rows(rowIdx).cells.first;
+        while colIdx is not null loop
+          
+          cell := sd.data.rows(rowIdx).cells(colIdx);
+          
+          if cell.v.st in (ST_NUMBER, ST_DATETIME) then
+            cell.xfId := mergeCellFormat(ctx, cell.xfId, getDefaultFormat(ctx, sd, cell.v.db_type));
+          end if;
+          
+          -- inherit column-level style
+          if sd.columnMap.exists(colIdx) and sd.columnMap(colIdx).xfId is not null then
+            cell.xfId := mergeCellStyle(ctx, sd.columnMap(colIdx).xfId, cell.xfId);
+          end if;
+          -- inherit row-level style
+          if sd.data.rows(rowIdx).props.xfId is not null then
+            cell.xfId := mergeCellStyle(ctx, sd.data.rows(rowIdx).props.xfId, cell.xfId);
+          end if;
+          
+          writeCell(ctx, stream, cell);
+                  
+          colIdx := sd.data.rows(rowIdx).cells.next(colIdx);
+            
+        end loop;
+          
+        stream_write(stream, '</row>');
+        
+        rowIdx := sd.data.rows.next(rowIdx);
+                  
+      end loop;
+      
+      sd.done := true;
+      isSheetEmpty := false;
+    
+    end if;
+    
+    stream_write(stream, '</sheetData>');
+    -- END sheetData
+    
+    if not isSheetEmpty then
+    
+      -- if there's only one table, set sheet-level autoFilter accordingly
+      if t.header.show and t.header.autoFilter then
+        if not t.formatAsTable then
+          sheet.filterRange := t.range;
           ctx.workbook.hasDefinedNames := true;
-          stream_write(stream, '<autoFilter ref="'||getRangeExpr(sheetRange)||'"/>');
+          stream_write(stream, '<autoFilter ref="'||getRangeExpr(t.range)||'"/>');
         end if;
       end if;
-         
+      
+      -- merged cells
+      if sd.mergedCells.count != 0 then
+        stream_write(stream, '<mergeCells count="'||to_char(sd.mergedCells.count)||'">');
+        for i in 1 .. sd.mergedCells.count loop
+          cellSpan := sd.mergedCells(i);
+          setAnchorRowOffset(sd, cellSpan.anchorRef);
+          setAnchorColOffset(sd, cellSpan.anchorRef);
+          stream_write(stream, '<mergeCell ref="'||makeRange(cellSpan).expr||'"/>');
+        end loop;
+        stream_write(stream, '</mergeCells>');
+      end if;
+      
       -- new sheet
-      sd.sqlMetadata.partitionId := sd.sqlMetadata.partitionId + 1;
       ctx.workbook.sheets.extend;
       sheet.sheetId := ctx.workbook.sheets.last;
       sheet.name := sd.sheetName;
-      if sd.sqlMetadata.partitionBySize then
-        sheet.name := replace(sheet.name, '${PNUM}', to_char(sd.sqlMetadata.partitionId));
+      if t.sqlMetadata.partitionBySize then
+        t.sqlMetadata.partitionId := t.sqlMetadata.partitionId + 1;
+        -- t is local, don't forget to write it back to sheet def
+        sd.tableList(t.id).sqlMetadata.partitionId := t.sqlMetadata.partitionId;
+        sheet.name := replace(sheet.name, '${PNUM}', to_char(t.sqlMetadata.partitionId));
         sheet.name := replace(sheet.name, '${PSTART}', to_char(partitionStart));
-        sheet.name := replace(sheet.name, '${PSTOP}', to_char(sd.sqlMetadata.r_num));
+        sheet.name := replace(sheet.name, '${PSTOP}', to_char(t.sqlMetadata.r_num));
       end if;
-      
+
       -- check name validity
       if translate(sheet.name, '_\/*?:[]', '_') != sheet.name 
          or substr(sheet.name, 1, 1) = '''' 
@@ -2415,56 +2865,44 @@ create or replace package body ExcelGen is
       then
         error('Invalid sheet name: %s', sheet.name);
       end if;
-      
+        
       -- check name uniqueness
       if ctx.workbook.sheetMap.exists(sheet.name) then
         error('Duplicate sheet name: %s', sheet.name);
       end if;
-      
+        
       sheet.partName := 'xl/worksheets/sheet'||to_char(sheet.sheetId)||'.xml';
-      sheet.tableParts := CT_TableParts();
 
       -- new sheet part
       part.name := sheet.partName;
       part.contentType := MT_WORKSHEET;
       part.rels := CT_Relationships();
       
-      if sd.formatAsTable then
-        tableId := addTable(ctx, sheetRange, sd.header.show, sd.header.autoFilter, sd.tableStyle, sd.columnMap, null, isEmpty);
-        sheet.tableParts.extend;
-        sheet.tableParts(sheet.tableParts.last) := tableId;
-        
-        -- table parts
-        if sheet.tableParts.count != 0 then
-          stream_write(stream, '<tableParts count="'||to_char(sheet.tableParts.count)||'">');
-          for i in 1 .. sheet.tableParts.count loop
-            rId := addRelationship(part, RS_TABLE, ctx.workbook.tables(sheet.tableParts(i)).partName);
-            stream_write(stream, '<tablePart r:id="'||rId||'"/>');
-          end loop;
-          stream_write(stream, '</tableParts>');
-        end if;
-      end if;
-      
+      -- table parts
+      if sheet.tableParts.count != 0 then
+        stream_write(stream, '<tableParts count="'||to_char(sheet.tableParts.count)||'">');
+        for i in 1 .. sheet.tableParts.count loop
+          rId := addRelationship(part, RS_TABLE, ctx.workbook.tables(sheet.tableParts(i)).partName);
+          stream_write(stream, '<tablePart r:id="'||rId||'"/>');
+        end loop;
+        stream_write(stream, '</tableParts>');
+      end if; 
+
       stream_write(stream, '</worksheet>');
       stream_flush(stream);
-      
+        
       part.content := stream.content;
-      
+        
       -- add sheet to workbook
       ctx.workbook.sheets(sheet.sheetId) := sheet;
       ctx.workbook.sheetMap(sheet.name) := sheet.sheetId;
-      
+        
       -- add sheet part to package
       addPart(ctx, part);
     
+    else
+      dbms_lob.freetemporary(stream.content);
     end if;
-      
-    if nrows = 0 then
-      debug('close cursor');
-      dbms_sql.close_cursor(sd.sqlMetadata.cursorNumber);
-    end if;
-
-    debug( 'data rows written to sheet: '||to_char(rowIdx - case when sd.header.show then 1 else 0 end) );
 
   end;
 
@@ -2473,19 +2911,18 @@ create or replace package body ExcelGen is
   , sd   in out nocopy sheet_definition_t
   )
   is
-    data            data_t;
+    dataMap         data_map_t;
+    t               table_t;
     nrows           integer;
-    rowIdx          integer := 0;
-    isEmpty         boolean := true;
-    sst_idx         pls_integer;
+    rowIdx          integer := t.anchorRef.rowOffset - 1;
+    colIdx          pls_integer;
     stream          xutl_xlsb.Stream_T;
     
     columnId        pls_integer;
-    columnHeader    varchar2(256);
-    
-    cellXfId        pls_integer;
-
-    sheetRange      range_t;
+    r               row_t;
+    cell            cell_t;
+    cell2           floatingCell_t;
+    cellSpan        cellSpan_t;
     tableId         pls_integer;
     rId             varchar2(256);
     
@@ -2494,192 +2931,323 @@ create or replace package body ExcelGen is
     
     partitionStart  pls_integer;
     partitionStop   pls_integer;
+    isSheetEmpty    boolean := true;
+    headerXfId      pls_integer;
     
   begin
     
+    sheet.tableParts := CT_TableParts();
+    
     -- prefetch
-    nrows := dbms_sql.fetch_rows(sd.sqlMetadata.cursorNumber);
+    --nrows := dbms_sql.fetch_rows(t.sqlMetadata.cursorNumber);
     
-    if nrows != 0 or ( nrows = 0 and sd.sqlMetadata.partitionId = 0 ) then
+    --if nrows != 0 or ( nrows = 0 and t.sqlMetadata.partitionId = 0 ) then 
+    --isEmpty := (nrows = 0);
     
-      isEmpty := (nrows = 0);
-      stream := xutl_xlsb.new_stream();  
+    stream := xutl_xlsb.new_stream();        
+    xutl_xlsb.put_simple_record(stream, 129);  -- BrtBeginSheet
       
-      xutl_xlsb.put_simple_record(stream, 129);  -- BrtBeginSheet
-      
-      if sd.tabColor is not null then
-        xutl_xlsb.put_WsProp(stream, sd.tabColor);
-      end if;
-      
+    if sd.tabColor is not null then
+      xutl_xlsb.put_WsProp(stream, sd.tabColor);
+    end if;
 
-      if sd.header.show and sd.header.isFrozen then
-        xutl_xlsb.put_simple_record(stream, 133);  -- BrtBeginWsViews
-        xutl_xlsb.put_BeginWsView(stream);  -- BrtBeginWsView
+    if sd.hasProps then   
+      xutl_xlsb.put_simple_record(stream, 133);  -- BrtBeginWsViews
+      xutl_xlsb.put_BeginWsView(stream, sd.showGridLines, sd.showRowColHeaders);  -- BrtBeginWsView
+      if sd.activePaneAnchorRef.value is not null then
         -- BrtPane : 
         xutl_xlsb.put_FrozenPane(stream
-                               , numRows => 1  -- num of frozen rows (ySplit)
-                               , numCols => 0  -- num of frozen columns  (xSplit)
-                               , topRow  => 1  -- first row of bottom-right pane
-                               , leftCol => 0  -- first column of bottom-right pane
+                               , numRows => sd.activePaneAnchorRef.r - 1   -- num of frozen rows (ySplit)
+                               , numCols => sd.activePaneAnchorRef.cn - 1  -- num of frozen columns  (xSplit)
+                               , topRow  => sd.activePaneAnchorRef.r - 1   -- first row of bottom-right pane
+                               , leftCol => sd.activePaneAnchorRef.cn - 1  -- first column of bottom-right pane
                                );
-        xutl_xlsb.put_simple_record(stream, 138);  -- BrtEndWsView
-        xutl_xlsb.put_simple_record(stream, 134);  -- BrtEndWsViews
       end if;
+      xutl_xlsb.put_simple_record(stream, 138);  -- BrtEndWsView
+      xutl_xlsb.put_simple_record(stream, 134);  -- BrtEndWsViews
+    end if;
 
-      -- columns
-      if sd.customColWidth and sd.columnMap.count != 0 then
-        xutl_xlsb.put_simple_record(stream, 390);  -- BrtBeginColInfos
-        for i in 1 .. sd.columnMap.count loop
-          if sd.columnMap(i).width is not null then
-            xutl_xlsb.put_ColInfo(stream, i - 1, getColumnWidth(sd.columnMap(i).width) * 256);
-          end if;
-        end loop;
-        xutl_xlsb.put_simple_record(stream, 391);  -- BrtEndColInfos
-      end if;
+    -- sheetFormatPr
+    if sd.defaultRowHeight is not null then
+      xutl_xlsb.put_WsFmtInfo(stream, sd.defaultRowHeight);
+    end if;
+
+    -- columns
+    if sd.hasCustomColProps and sd.columnMap.count != 0 then
+      xutl_xlsb.put_simple_record(stream, 390);  -- BrtBeginColInfos
       
-      xutl_xlsb.put_simple_record(stream, 145);  -- BrtBeginSheetData
+      columnId := sd.columnMap.first;
+      while columnId is not null loop
+        xutl_xlsb.put_ColInfo( stream
+                             , columnId - 1
+                             , colWidth      => nvl(sd.columnMap(columnId).width, DEFAULT_COL_WIDTH)
+                             , isCustomWidth => ( sd.columnMap(columnId).width is not null )
+                             , styleRef      => nvl(sd.columnMap(columnId).xfId, 0)
+                             );
+        columnId := sd.columnMap.next(columnId);
+      end loop;
+      
+      xutl_xlsb.put_simple_record(stream, 391);  -- BrtEndColInfos
+    end if;
+      
+    xutl_xlsb.put_simple_record(stream, 145);  -- BrtBeginSheetData
+
+    for tId in 1 .. sd.tableList.count loop
+      
+      t := sd.tableList(tId);
+      setAnchorRowOffset(sd, t.anchorRef);
+      r.id := t.anchorRef.rowOffset - 1;
+      cell.r := r.id;
       
       -- header row
-      if sd.header.show then
-        rowIdx := rowIdx + 1;
-        xutl_xlsb.put_RowHdr(stream, rowIdx - 1);
-        for i in 1 .. sd.sqlMetadata.columnList.count loop
-          if not sd.sqlMetadata.columnList(i).excluded then
-            columnId := sd.sqlMetadata.columnList(i).id;
-            columnHeader := sd.columnMap(columnId).header;
-            sst_idx := put_string(ctx, columnHeader);
-            xutl_xlsb.put_CellIsst(stream
-                                 , colIndex => i - 1
-                                 , styleRef => nvl(sd.header.xfId, 0)
-                                 , isst     => sst_idx - 1
-                                 );
+      if t.header.show then
+        r.id := r.id + 1;
+        -- common cell attributes 
+        cell.r := r.id;
+        --cell.xfId := nvl(t.header.xfId, 0);
+        if t.rowMap.exists(0) and t.rowMap(0).xfId is not null then
+          headerXfId := t.rowMap(0).xfId;
+        else
+          headerXfId := 0;
+        end if;
+        
+        cell.v.st := ST_STRING;
+        
+        if sd.streamable then
+          --xutl_xlsb.put_RowHdr(stream, cell.r - 1);
+          writeRowBin(stream, r, sd.defaultRowHeight);
+        end if;
+        
+        for i in 1 .. t.sqlMetadata.columnList.count loop
+          if not t.sqlMetadata.columnList(i).excluded then
+            columnId := t.sqlMetadata.columnList(i).id;
+            cell.cn := t.sqlMetadata.columnList(i).colNum;
+            cell.c := t.sqlMetadata.columnList(i).colRef;
+            cell.v.varchar2_value := t.columnMap(columnId).name;
+
+            cell.xfId := headerXfId;
+            -- sheet-level column idx
+            colIdx := t.anchorRef.colOffset - 1 + columnId;
+            if sd.columnMap.exists(colIdx) and sd.columnMap(colIdx).xfId is not null then
+              cell.xfId := mergeCellStyle(ctx, sd.columnMap(colIdx).xfId, cell.xfId);
+            end if;
+            
+            if sd.streamable then
+              writeCellBin(ctx, stream, cell);
+            else
+              sd.data.rows(cell.r).cells(cell.cn) := cell;
+            end if;
+            
           end if;
         end loop;
       end if;
+
+      -- prefetch
+      nrows := dbms_sql.fetch_rows(t.sqlMetadata.cursorNumber);
+      t.isEmpty := (nrows = 0);
       
-      partitionStart := sd.sqlMetadata.r_num + nrows;
-      partitionStop := partitionStart + sd.sqlMetadata.partitionSize - 1;
+      partitionStart := t.sqlMetadata.r_num + nrows;
+      partitionStop := partitionStart + t.sqlMetadata.partitionSize - 1;
+      
+      isSheetEmpty := t.isEmpty and t.sqlMetadata.partitionId != 0;
       
       -- data rows
       while nrows != 0 loop
         
-        rowIdx := rowIdx + 1;
-        xutl_xlsb.put_RowHdr(stream, rowIdx - 1);
+        r.id := r.id + 1;
+        cell.r := r.id;
         
-        for i in 1 .. sd.sqlMetadata.columnList.count loop
+        t.sqlMetadata.r_num := t.sqlMetadata.r_num + 1;
+        
+        if sd.streamable then
+          writeRowBin(stream, r, sd.defaultRowHeight);
+        end if;
+        
+        -- read current row
+        dataMap := getSqlData(t.sqlMetadata);
+        
+        for i in 1 .. t.sqlMetadata.columnList.count loop
           
-          cellXfId := sd.sqlMetadata.columnList(i).xfId;
+          if not t.sqlMetadata.columnList(i).excluded then
           
-          case sd.sqlMetadata.columnList(i).type
-          when dbms_sql.VARCHAR2_TYPE then
-            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.varchar2_value);
-            if data.varchar2_value is not null then
-              sst_idx := put_string(ctx, data.varchar2_value);
-              xutl_xlsb.put_CellIsst(stream, i-1, cellXfId, sst_idx-1);
+            cell.v := dataMap(i);
+            cell.cn := t.sqlMetadata.columnList(i).colNum;
+            cell.c := t.sqlMetadata.columnList(i).colRef;
+            
+            cell.xfId := t.sqlMetadata.columnList(i).xfId;
+
+            -- if original SQL type is ANYDATA, and actual value is numeric or datetime, apply default format
+            if t.sqlMetadata.columnList(i).supertype = ST_VARIANT and cell.v.st in (ST_NUMBER, ST_DATETIME) then
+              cell.xfId := mergeCellFormat(ctx, cell.xfId, getDefaultFormat(ctx, sd, cell.v.db_type));
             end if;
             
-          when dbms_sql.CHAR_TYPE then
-            dbms_sql.column_value_char(sd.sqlMetadata.cursorNumber, i, data.char_value);
-            if data.char_value is not null then
-              data.varchar2_value := rtrim(data.char_value);
-              sst_idx := put_string(ctx, data.varchar2_value);
-              xutl_xlsb.put_CellIsst(stream, i-1, cellXfId, sst_idx-1);
+            -- merge row-level style
+            if t.rowMap.exists(t.sqlMetadata.r_num) and t.rowMap(t.sqlMetadata.r_num).xfId is not null then
+              cell.xfId := mergeCellStyle(ctx, t.rowMap(t.sqlMetadata.r_num).xfId, cell.xfId);
+            end if;            
+            
+            if sd.streamable then             
+              writeCellBin(ctx, stream, cell);
+            else
+              sd.data.rows(cell.r).cells(cell.cn) := cell;
             end if;
-            
-          when dbms_sql.NUMBER_TYPE then
-            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.number_value);
-            xutl_xlsb.put_CellNumber(stream, i-1, cellXfId, data.number_value);
-            
-          when dbms_sql.BINARY_DOUBLE_TYPE then
-            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.number_value);
-            xutl_xlsb.put_CellNumber(stream, i-1, cellXfId, data.number_value);
-            
-          when dbms_sql.DATE_TYPE then
-            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.date_value);
-            xutl_xlsb.put_CellNumber(stream, i-1, cellXfId, toOADate(dt => data.date_value));
-            
-          when dbms_sql.TIMESTAMP_TYPE then
-            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.ts_value);
-            data.ts_value := timestampRound(data.ts_value, 3);
-            xutl_xlsb.put_CellNumber(stream, i-1, cellXfId, toOADate(ts => data.ts_value));
-            
-          when dbms_sql.TIMESTAMP_WITH_TZ_TYPE then
-            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.tstz_value);
-            data.ts_value := timestampRound(data.tstz_value, 3);
-            xutl_xlsb.put_CellNumber(stream, i-1, cellXfId, toOADate(ts => data.tstz_value));
-            
-          when dbms_sql.CLOB_TYPE then      
-            dbms_sql.column_value(sd.sqlMetadata.cursorNumber, i, data.clob_value);
-            if data.clob_value is not null and dbms_lob.getlength(data.clob_value) != 0 then
-              -- try conversion to VARCHAR2
-              begin
-                data.varchar2_value := to_char(data.clob_value);
-                sst_idx := put_string(ctx, data.varchar2_value);
-                xutl_xlsb.put_CellIsst(stream, i-1, cellXfId, sst_idx-1);
-              exception
-                when value_error then
-                  -- stream CLOB content as an inline string, up to 32767 chars
-                  xutl_xlsb.put_CellSt(stream, i-1, cellXfId, lobValue => data.clob_value);
-              end;
-            end if;
-            
-          end case;
+          
+          end if;
           
         end loop;
         
-        sd.sqlMetadata.r_num := sd.sqlMetadata.r_num + 1;
+        --t.sqlMetadata.r_num := t.sqlMetadata.r_num + 1;
         
-        if rowIdx = MAX_ROW_NUMBER then
-          if not sd.sqlMetadata.partitionBySize then
+        if cell.r = MAX_ROW_NUMBER then
+          if not t.sqlMetadata.partitionBySize then
             -- force closing cursor
             nrows := 0;
           end if;
           exit;
         end if;
         
-        exit when sd.sqlMetadata.r_num = partitionStop;
+        exit when t.sqlMetadata.r_num = partitionStop;
         
         -- fetch next row
-        nrows := dbms_sql.fetch_rows(sd.sqlMetadata.cursorNumber);
+        nrows := dbms_sql.fetch_rows(t.sqlMetadata.cursorNumber);
           
       end loop;
       
       debug('end fetch');
+
+      if nrows = 0 then
+        debug('close cursor');
+        dbms_sql.close_cursor(t.sqlMetadata.cursorNumber);
+        sd.done := true;
+      end if;
+
+      t.range := makeRange(t.sqlMetadata.columnList(t.sqlMetadata.visibleColumnSet.first).colRef
+                         , t.anchorRef.rowOffset
+                         , t.sqlMetadata.columnList(t.sqlMetadata.visibleColumnSet.last).colRef
+                         , cell.r);
+
+      if t.formatAsTable and not isSheetEmpty then
+        tableId := addTableLayout(ctx, t.range, t.header.show, t.header.autoFilter, t.tableStyle, t.columnMap, null, t.isEmpty
+                                 , t.showFirstColumn, t.showLastColumn, t.showRowStripes, t.showColumnStripes);
+        sheet.tableParts.extend;
+        sheet.tableParts(sheet.tableParts.last) := tableId;
+      end if;
       
-      xutl_xlsb.put_simple_record(stream, 146);  -- BrtEndSheetData
+      sd.tableList(tId) := t;
       
-      sheetRange := makeRange(sd.sqlMetadata.columnList(sd.sqlMetadata.visibleColumnSet.first).colRef
-                            , 1
-                            , sd.sqlMetadata.columnList(sd.sqlMetadata.visibleColumnSet.last).colRef
-                            , rowIdx);
+    end loop;
+
+    -- resolve floating cells
+    for i in 1 .. sd.floatingCells.count loop
+      cell2 := sd.floatingCells(i);
+      setAnchorRowOffset(sd, cell2.anchorRef);
+      setAnchorColOffset(sd, cell2.anchorRef);
       
-      -- autoFilter
-      if sd.header.show and sd.header.autoFilter then
-        if not sd.formatAsTable then
-          sheet.filterRange := sheetRange;
+      cell.r := cell2.anchorRef.rowOffset;
+      cell.cn := cell2.anchorRef.colOffset;
+      cell.c := base26encode(cell.cn);
+      cell.xfId := cell2.xfId;    
+      cell.v := cell2.data;
+      sd.data.rows(cell.r).id := cell.r;
+      sd.data.rows(cell.r).cells(cell.cn) := cell;
+    end loop;
+
+    -- write in-memory cells
+    if sd.data.rows.count != 0 then
+      rowIdx := sd.data.rows.first;
+      while rowIdx is not null loop
+
+        if sd.data.rows(rowIdx).id is null then
+          sd.data.rows(rowIdx).id := rowIdx;
+        end if;
+      
+        writeRowBin(stream, sd.data.rows(rowIdx), sd.defaultRowHeight);
+          
+        -- cells 
+        colIdx := sd.data.rows(rowIdx).cells.first;
+        while colIdx is not null loop
+            
+          cell := sd.data.rows(rowIdx).cells(colIdx);
+          
+          if cell.v.st in (ST_NUMBER, ST_DATETIME) then
+            cell.xfId := mergeCellFormat(ctx, cell.xfId, getDefaultFormat(ctx, sd, cell.v.db_type));
+          end if;          
+          
+          -- inherit column-level style
+          if sd.columnMap.exists(colIdx) and sd.columnMap(colIdx).xfId is not null then
+            cell.xfId := mergeCellStyle(ctx, sd.columnMap(colIdx).xfId, cell.xfId);
+          end if;          
+          -- inherit row-level style
+          if sd.data.rows(rowIdx).props.xfId is not null then
+            cell.xfId := mergeCellStyle(ctx, sd.data.rows(rowIdx).props.xfId, cell.xfId);
+          end if;
+
+          writeCellBin(ctx, stream, cell);
+                    
+          colIdx := sd.data.rows(rowIdx).cells.next(colIdx);
+              
+        end loop;
+          
+        rowIdx := sd.data.rows.next(rowIdx);
+                    
+      end loop;
+      
+      sd.done := true;
+      isSheetEmpty := false;
+      
+    end if;
+      
+    xutl_xlsb.put_simple_record(stream, 146);  -- BrtEndSheetData
+    
+    if not isSheetEmpty then
+    
+      -- if there's only one table, set sheet-level autoFilter accordingly
+      if t.header.show and t.header.autoFilter then
+        if not t.formatAsTable then
+          sheet.filterRange := t.range;
           ctx.workbook.hasDefinedNames := true;
           xutl_xlsb.put_BeginAFilter(
             stream
-          , firstRow    => sheetRange.start_ref.r - 1
-          , firstCol    => sheetRange.start_ref.cn - 1
-          , lastRow     => sheetRange.end_ref.r - 1
-          , lastCol     => sheetRange.end_ref.cn - 1
+          , firstRow    => t.range.start_ref.r - 1
+          , firstCol    => t.range.start_ref.cn - 1
+          , lastRow     => t.range.end_ref.r - 1
+          , lastCol     => t.range.end_ref.cn - 1
           );
           xutl_xlsb.put_simple_record(stream, 162);  -- BrtEndAFilter
         end if;
       end if;
-         
+
+      -- merged cells
+      if sd.mergedCells.count != 0 then
+        xutl_xlsb.put_simple_record(stream, 177, int2raw(sd.mergedCells.count)); -- BrtBeginMergeCells
+        for i in 1 .. sd.mergedCells.count loop
+          cellSpan := sd.mergedCells(i);
+          setAnchorRowOffset(sd, cellSpan.anchorRef);
+          setAnchorColOffset(sd, cellSpan.anchorRef);
+          xutl_xlsb.put_MergeCell(
+            stream
+          , rwFirst  => cellSpan.anchorRef.rowOffset - 1
+          , rwLast   => ( cellSpan.anchorRef.rowOffset + cellSpan.rowSpan - 1 ) - 1
+          , colFirst => cellSpan.anchorRef.colOffset - 1
+          , colLast  => ( cellSpan.anchorRef.colOffset + cellSpan.colSpan - 1 ) - 1
+          );
+        end loop;
+        xutl_xlsb.put_simple_record(stream, 178); -- BrtEndMergeCells
+      end if;
+           
       -- new sheet
-      sd.sqlMetadata.partitionId := sd.sqlMetadata.partitionId + 1;
       ctx.workbook.sheets.extend;
       sheet.sheetId := ctx.workbook.sheets.last;
       sheet.name := sd.sheetName;
-      if sd.sqlMetadata.partitionBySize then
-        sheet.name := replace(sheet.name, '${PNUM}', to_char(sd.sqlMetadata.partitionId));
+      if t.sqlMetadata.partitionBySize then
+        t.sqlMetadata.partitionId := t.sqlMetadata.partitionId + 1;
+        -- t is local, don't forget to write it back to sheet def
+        sd.tableList(t.id).sqlMetadata.partitionId := t.sqlMetadata.partitionId;
+        sheet.name := replace(sheet.name, '${PNUM}', to_char(t.sqlMetadata.partitionId));
         sheet.name := replace(sheet.name, '${PSTART}', to_char(partitionStart));
-        sheet.name := replace(sheet.name, '${PSTOP}', to_char(sd.sqlMetadata.r_num));
+        sheet.name := replace(sheet.name, '${PSTOP}', to_char(t.sqlMetadata.r_num));
       end if;
-      
+        
       -- check name validity
       if translate(sheet.name, '_\/*?:[]', '_') != sheet.name 
          or substr(sheet.name, 1, 1) = '''' 
@@ -2688,59 +3256,122 @@ create or replace package body ExcelGen is
       then
         error('Invalid sheet name: %s', sheet.name);
       end if;
-      
+        
       -- check name uniqueness
       if ctx.workbook.sheetMap.exists(sheet.name) then
         error('Duplicate sheet name: %s', sheet.name);
       end if;
-      
+        
       sheet.partName := 'xl/worksheets/sheet'||to_char(sheet.sheetId)||'.bin';
-      sheet.tableParts := CT_TableParts();
 
       -- new sheet part
       part.name := sheet.partName;
       part.contentType := MT_WORKSHEET_BIN;
       part.rels := CT_Relationships();
       
-      if sd.formatAsTable then
-        tableId := addTable(ctx, sheetRange, sd.header.show, sd.header.autoFilter, sd.tableStyle, sd.columnMap, null, isEmpty);
-        sheet.tableParts.extend;
-        sheet.tableParts(sheet.tableParts.last) := tableId;
-        
-        -- table parts
-        if sheet.tableParts.count != 0 then
-          xutl_xlsb.put_simple_record(stream, 660, int2raw(sheet.tableParts.count)); -- BrtBeginListParts
-          for i in 1 .. sheet.tableParts.count loop
-            rId := addRelationship(part, RS_TABLE, ctx.workbook.tables(sheet.tableParts(i)).partName);
-            xutl_xlsb.put_ListPart(stream, rId);  -- BrtListPart
-          end loop;
-          xutl_xlsb.put_simple_record(stream, 662);  -- BrtEndListParts
-        end if;
+      -- table parts
+      if sheet.tableParts.count != 0 then
+        xutl_xlsb.put_simple_record(stream, 660, int2raw(sheet.tableParts.count)); -- BrtBeginListParts
+        for i in 1 .. sheet.tableParts.count loop
+          rId := addRelationship(part, RS_TABLE, ctx.workbook.tables(sheet.tableParts(i)).partName);
+          xutl_xlsb.put_ListPart(stream, rId);  -- BrtListPart
+        end loop;
+        xutl_xlsb.put_simple_record(stream, 662);  -- BrtEndListParts
       end if;
-      
+        
       xutl_xlsb.put_simple_record(stream, 130);  -- BrtEndSheet
-      
       xutl_xlsb.flush_stream(stream);
-      
+        
       part.contentBin := stream.content;
       part.isBinary := true;
-      
+        
       -- add sheet to workbook
       ctx.workbook.sheets(sheet.sheetId) := sheet;
       ctx.workbook.sheetMap(sheet.name) := sheet.sheetId;
-      
+        
       -- add sheet part to package
       addPart(ctx, part);
+
+    else
+      dbms_lob.freetemporary(stream.content);
+    end if;
+
+  end;
+  
+  procedure prepareTable (
+    ctx  in out nocopy context_t
+  , sd   in out nocopy sheet_definition_t
+  , i    in pls_integer
+  ) 
+  is
+    defaultFmt        varchar2(128);
+    DEFAULT_XF        CT_Xf;
+    cellXf            CT_Xf;
+    columnId          pls_integer;
+    sheetColumnId     pls_integer;
+    tableColumn       table_column_t;
+    hasTableColProps  boolean;
+  begin
     
-    end if;
-      
-    if nrows = 0 then
-      debug('close cursor');
-      dbms_sql.close_cursor(sd.sqlMetadata.cursorNumber);
-    end if;
-
-    debug( 'data rows written to sheet: '||to_char(rowIdx - case when sd.header.show then 1 else 0 end) );
-
+    setAnchorColOffset(sd, sd.tableList(i).anchorRef);
+          
+    prepareCursor(sd.tableList(i).sqlMetadata, sd.tableList(i).anchorRef.colOffset);
+        
+    -- set column-level information
+    for j in 1 .. sd.tableList(i).sqlMetadata.columnList.count loop
+          
+      if not sd.tableList(i).sqlMetadata.columnList(j).excluded then
+            
+        columnId := sd.tableList(i).sqlMetadata.columnList(j).id; -- visible column ID
+        cellXf := DEFAULT_XF;
+            
+        tableColumn := null;
+        hasTableColProps := sd.tableList(i).columnMap.exists(columnId);
+        if hasTableColProps then
+          tableColumn := sd.tableList(i).columnMap(columnId);
+        end if;
+          
+        if tableColumn.name is null then
+          sd.tableList(i).columnMap(columnId).name := sd.tableList(i).sqlMetadata.columnList(j).name;         
+        end if;
+          
+        -- getting column style : table-level style takes precedence over sheet-level
+        if tableColumn.xfId is not null then
+          cellXf := ctx.workbook.styles.cellXfs(tableColumn.xfId);
+        else
+          -- sheet column style, if defined
+          sheetColumnId := columnId + sd.tableList(i).anchorRef.colOffset - 1;
+          if sd.columnMap.exists(sheetColumnId) and sd.columnMap(sheetColumnId).xfId is not null then
+            cellXf := ctx.workbook.styles.cellXfs(sd.columnMap(sheetColumnId).xfId);
+          end if;
+        end if;
+          
+        defaultFmt := getDefaultFormat(ctx, sd, sd.tableList(i).sqlMetadata.columnList(j).type);
+        -- if no numFmt defined, apply default
+        if cellXf.numFmtId = 0 and defaultFmt is not null then
+          cellXf.numFmtId := putNumfmt(ctx.workbook.styles, defaultFmt);
+        end if;
+            
+        -- if defined on this column, apply hyperlink master style and font
+        if sd.tableList(i).columnLinkMap.exists(columnId) then
+          cellXf.xfId := ctx.workbook.styles.hlinkXfId;
+          cellXf.fontId := ctx.workbook.styles.cellStyleXfs(cellXf.xfId).fontId;
+        else
+          cellXf.xfId := 0; -- Normal style
+        end if;
+            
+        setCellXfContent(cellXf);
+        sd.tableList(i).sqlMetadata.columnList(j).xfId := putCellXf(ctx.workbook.styles, cellXf);
+          
+      end if;
+          
+    end loop;
+    
+    -- recursively process dependent tables
+    for j in 1 .. sd.tableForest.t(i).children.count loop
+      prepareTable(ctx, sd, sd.tableForest.t(i).children(j));
+    end loop;
+    
   end;
 
   procedure createWorksheet (
@@ -2748,86 +3379,44 @@ create or replace package body ExcelGen is
   , sheetIndex  in pls_integer
   )
   is
-    sheetDefinition  sheet_definition_t;
-    --columnFmt        varchar2(128);
-    defaultFmt       varchar2(128);
-    DEFAULT_XF       CT_Xf;
-    cellXf           CT_Xf;
-    baseXfId         pls_integer := 0;
-    columnId         pls_integer;
-    columnName       varchar2(128);
-    sheetColumn      sheet_column_t;
+    sd               sheet_definition_t;
+    paginationCount  pls_integer := 0;
   begin
-    debug('CreateWorksheet index: '||to_char(sheetIndex));
-    sheetDefinition := ctx.sheetDefinitionMap(sheetIndex);
-    prepareCursor(sheetDefinition.sqlMetadata);
     
-    -- set column-level information
-    for i in 1 .. sheetDefinition.sqlMetadata.columnList.count loop
-      
-      if not sheetDefinition.sqlMetadata.columnList(i).excluded then
-        
-        columnId := sheetDefinition.sqlMetadata.columnList(i).id; -- visible column ID
-        columnName := sheetDefinition.sqlMetadata.columnList(i).name;
-        sheetColumn := null;
-        cellXf := DEFAULT_XF;
-        
-        if sheetDefinition.columnMap.exists(columnId) then
-          sheetColumn := sheetDefinition.columnMap(columnId);
-        end if;
-        
-        if sheetColumn.header is null then
-          sheetColumn.header := columnName;
-          sheetDefinition.columnMap(columnId) := sheetColumn;
-        end if;
-        
-        defaultFmt := case sheetDefinition.sqlMetadata.columnList(i).type
-                      when dbms_sql.NUMBER_TYPE then coalesce(sheetDefinition.defaultFmts.numFmt, ctx.defaultFmts.numFmt, DEFAULT_NUM_FMT)
-                      when dbms_sql.DATE_TYPE then coalesce(sheetDefinition.defaultFmts.dateFmt, ctx.defaultFmts.dateFmt, DEFAULT_DATE_FMT)
-                      when dbms_sql.TIMESTAMP_TYPE then coalesce(sheetDefinition.defaultFmts.timestampFmt, ctx.defaultFmts.timestampFmt, DEFAULT_TIMESTAMP_FMT)
-                      when dbms_sql.TIMESTAMP_WITH_TZ_TYPE then coalesce(sheetDefinition.defaultFmts.timestampFmt, ctx.defaultFmts.timestampFmt, DEFAULT_TIMESTAMP_FMT)
-                      end;
-        
-        -- get this column style, if defined
-        if sheetColumn.xfId is not null then
-          cellXf := ctx.workbook.styles.cellXfs(sheetColumn.xfId);
-        end if;
-        
-        -- if no numFmt defined, apply default
-        if cellXf.numFmtId = 0 and defaultFmt is not null then
-          cellXf.numFmtId := putNumfmt(ctx.workbook.styles, defaultFmt);
-        end if;
-        
-        -- if defined on this column, apply hyperlink master style and font
-        if sheetDefinition.columnLinkMap.exists(columnId) then
-          --baseXfId := ctx.workbook.styles.hlinkXfId;
-          cellXf.xfId := ctx.workbook.styles.hlinkXfId;
-          cellXf.fontId := ctx.workbook.styles.cellStyleXfs(cellXf.xfId).fontId;
-        else
-          cellXf.xfId := 0; -- Normal style
-        end if;
-        
-        setCellXfContent(cellXf);
-        
-        --cellXf := makeCellXf(ctx.workbook.styles, baseXfId, sheetColumn.fmt);
-        sheetDefinition.sqlMetadata.columnList(i).xfId := putCellXf(ctx.workbook.styles, cellXf);
-      
-      end if;
-      
+    sd := ctx.sheetDefinitionMap(sheetIndex);
+    
+    sd.tableForest := getTableForest(sd.tableList);
+    
+    -- prepare root tables
+    for i in 1 .. sd.tableForest.roots.count loop
+      prepareTable(ctx, sd, sd.tableForest.roots(i));
+    end loop;
+    
+    for i in 1 .. sd.tableList.count loop
+      if sd.tableList(i).sqlMetadata.partitionBySize then
+        paginationCount := paginationCount + 1;
+      end if;      
     end loop;
     
     -- hyperlinks
-    prepareHyperlinks(sheetDefinition);
+    prepareHyperlinks(sd);
     
-    while dbms_sql.is_open(sheetDefinition.sqlMetadata.cursorNumber) loop
+    sd.streamable := ( sd.tableList.count = 1 and sd.data.rows.count = 0 );
+    sd.done := false;
+    
+    -- layout check
+    if paginationCount != 0 and not sd.streamable then
+      error('Cannot paginate data in a multitable or mixed-content worksheet');
+    end if;
+    
+    while not sd.done loop
       case ctx.fileType
       when FILE_XLSX then
-        createWorksheetImpl(ctx, sheetDefinition);
+        createWorksheetImpl(ctx, sd);
       when FILE_XLSB then
-        createWorksheetBinImpl(ctx, sheetDefinition);
+        createWorksheetBinImpl(ctx, sd);
       end case;
     end loop;
-    debug('End CreateWorksheet index: '||to_char(sheetIndex));
 
   end;
   
@@ -2852,7 +3441,11 @@ create or replace package body ExcelGen is
     stream_write(stream, '</tableColumns>');
     stream_write(stream, '<tableStyleInfo' || 
                          case when tab.styleName is not null then ' name="'||tab.styleName||'"' end ||
-                         ' showRowStripes="1"/>');
+                         case when tab.showFirstColumn then ' showFirstColumn="1"' end ||
+                         case when tab.showLastColumn then ' showLastColumn="1"' end ||
+                         case when tab.showRowStripes then ' showRowStripes="1"' end ||
+                         case when tab.showColumnStripes then ' showColumnStripes="1"' end ||    
+                         '/>');
     stream_write(stream, '</table>');
     stream_flush(stream);
     addPart(ctx, tab.partName, MT_TABLE, stream.content);
@@ -2897,7 +3490,14 @@ create or replace package body ExcelGen is
     end loop;
     xutl_xlsb.put_simple_record(stream, 346);  -- BrtEndListCols
     
-    xutl_xlsb.put_TableStyleClient(stream, tab.styleName);  -- BrtTableStyleClient
+    xutl_xlsb.put_TableStyleClient(  -- BrtTableStyleClient
+      stream
+    , tab.styleName
+    , tab.showFirstColumn
+    , tab.showLastColumn
+    , tab.showRowStripes
+    , tab.showColumnStripes
+    );  
     
     xutl_xlsb.put_simple_record(stream, 344);  -- BrtEndList
     xutl_xlsb.flush_stream(stream);
@@ -3257,57 +3857,109 @@ create or replace package body ExcelGen is
     ctx_cache(p_ctxId).string_map.delete;
     ctx_cache(p_ctxId).string_list.delete;
     ctx_cache.delete(p_ctxId);
+    if p_ctxId = currentCtxId then
+      currentCtx := null;
+      currentCtxId := -1;
+    end if;
+  end;
+
+  function putTableImpl (
+    sd             in out nocopy sheet_definition_t
+  , p_query        in varchar2
+  , p_rc           in sys_refcursor
+  , p_paginate     in boolean default false
+  , p_pageSize     in pls_integer default null
+  , p_anchorRef    in anchorRef_t default null
+  , p_excludeCols  in varchar2 default null
+  )
+  return tableHandle
+  is
+    t         table_t;
+    local_rc  sys_refcursor := p_rc;
+  begin
+    t.formatAsTable := false;
+    
+    if p_paginate then
+      t.sqlMetadata.partitionBySize := true;
+      t.sqlMetadata.partitionSize := nvl(p_pageSize, MAX_ROW_NUMBER);
+    end if;    
+    
+    if p_query is not null then
+      t.sqlMetadata.queryString := p_query;
+      t.sqlMetadata.bindVariables := bind_variable_list_t();
+    else
+      t.sqlMetadata.cursorNumber := dbms_sql.to_cursor_number(local_rc);
+    end if;
+    
+    --t.anchorRef := parseRangeExpr(nvl(p_anchorRef,'A1')).start_ref;
+    t.anchorRef := p_anchorRef;
+    if t.anchorRef.rowOffset is null then
+      t.anchorRef.rowOffset := 1;
+    end if;
+    if t.anchorRef.colOffset is null then
+      t.anchorRef.colOffset := 1;
+    end if;
+    
+    t.sqlMetadata.excludeSet := parseIntList(p_excludeCols, ',');
+    
+    sd.tableList.extend;
+    t.id := sd.tableList.last;
+    sd.tableList(t.id) := t;
+        
+    return t.id;
   end;
 
   function addSheetImpl (
-    p_ctxId       in ctxHandle
+    ctx           in out nocopy context_t
   , p_sheetName   in varchar2
-  , p_query       in varchar2
-  , p_rc          in sys_refcursor
   , p_tabColor    in varchar2 default null
-  , p_paginate    in boolean default false
-  , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
-  , p_excludeCols in varchar2 default null
   )
   return sheetHandle
   is
-    sd        sheet_definition_t;
-    local_rc  sys_refcursor := p_rc;
+    sd  sheet_definition_t;
   begin
-    debug('sheetIndex: '||p_sheetIndex||' sheetName: '||p_sheetName);
     sd.sheetName := p_sheetName;
-    sd.tabColor := validateColor(p_tabColor);
-    sd.formatAsTable := false;
-    if p_paginate then
-      sd.sqlMetadata.partitionBySize := true;
-      sd.sqlMetadata.partitionSize := nvl(p_pageSize, MAX_ROW_NUMBER);
-    end if;
-    
-    if p_query is not null then
-      sd.sqlMetadata.queryString := p_query;
-      sd.sqlMetadata.bindVariables := bind_variable_list_t();
-    else
-      sd.sqlMetadata.cursorNumber := dbms_sql.to_cursor_number(local_rc);
-    end if;
+    sd.tabColor := ExcelTypes.validateColor(p_tabColor);
     
     if p_sheetIndex is not null then
-      if not ctx_cache(p_ctxId).sheetDefinitionMap.exists(p_sheetIndex) then
+      if not ctx.sheetDefinitionMap.exists(p_sheetIndex) then
         sd.sheetIndex := p_sheetIndex;
       else
         error('Duplicate sheet index: %d', p_sheetIndex);
       end if;
     else
-      sd.sheetIndex := nvl(ctx_cache(p_ctxId).sheetDefinitionMap.last, 0) + 1;
+      sd.sheetIndex := nvl(ctx.sheetDefinitionMap.last, 0) + 1;
     end if;
     
-    sd.sqlMetadata.excludeSet := parseIntList(p_excludeCols, ',');
+    sd.mergedCells := cellSpanList_t();
+    sd.tableList := tableList_t();
+    sd.data.hasCells := false;
+    sd.floatingCells := floatingCellList_t();
     
-    ctx_cache(p_ctxId).sheetDefinitionMap(sd.sheetIndex) := sd;
-    ctx_cache(p_ctxId).sheetIndexMap(sd.sheetName) := sd.sheetIndex;
+    ctx.sheetDefinitionMap(sd.sheetIndex) := sd;
+    ctx.sheetIndexMap(sd.sheetName) := sd.sheetIndex;
     
     return sd.sheetIndex;
     
+  end;
+
+  function addSheet (
+    p_ctxId       in ctxHandle
+  , p_sheetName   in varchar2
+  , p_tabColor    in varchar2 default null
+  , p_sheetIndex  in pls_integer default null
+  )
+  return sheetHandle
+  is
+  begin
+    loadContext(p_ctxId);
+    return addSheetImpl(
+             currentCtx
+           , p_sheetName
+           , p_tabColor
+           , p_sheetIndex
+           );
   end;
   
   procedure addSheetFromQuery (
@@ -3339,12 +3991,17 @@ create or replace package body ExcelGen is
   return sheetHandle
   is
     sheetId  sheetHandle;
+    tableId  tableHandle;
   begin
+    loadContext(p_ctxId);
     if p_query is null then
       error('Query string argument cannot be null');
     else
-      sheetId := addSheetImpl(p_ctxId, p_sheetName, p_query, null, p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_excludeCols);
+      sheetId := addSheetImpl(currentCtx, p_sheetName, p_tabColor, p_sheetIndex);
     end if;
+    
+    tableId := putTableImpl(currentCtx.sheetDefinitionMap(sheetId), p_query, null, p_paginate, p_pageSize, null, p_excludeCols);
+    
     return sheetId;
   end;
 
@@ -3377,16 +4034,293 @@ create or replace package body ExcelGen is
   return sheetHandle
   is
     sheetId  sheetHandle;
+    tableId  tableHandle;
   begin
+    loadContext(p_ctxId);
     if p_rc is null then
       error('Ref cursor argument cannot be null');
     else
-      sheetId := addSheetImpl(p_ctxId, p_sheetName, null, p_rc, p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_excludeCols);
+      sheetId := addSheetImpl(currentCtx, p_sheetName, p_tabColor, p_sheetIndex);
     end if;
+    tableId := putTableImpl(currentCtx.sheetDefinitionMap(sheetId), null, p_rc, p_paginate, p_pageSize, null, p_excludeCols);
     return sheetId;
   end;
 
-  -- to be deprecated
+  procedure assertTableExists (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle
+  , p_tableId  in tableHandle   
+  )
+  is
+  begin
+    if not currentCtx.sheetDefinitionMap(p_sheetId).tableList.exists(p_tableId) then
+      error('Undefined table handle (id=%d)', p_tableId);
+    end if;
+  end;
+
+  function addTable (
+    p_ctxId            in ctxHandle
+  , p_sheetId          in sheetHandle
+  , p_query            in varchar2
+  , p_paginate         in boolean default false
+  , p_pageSize         in pls_integer default null
+  , p_anchorRowOffset  in pls_integer default null
+  , p_anchorColOffset  in pls_integer default null
+  , p_anchorTableId    in tableHandle default null
+  , p_anchorPosition   in pls_integer default null
+  , p_excludeCols      in varchar2 default null
+  )
+  return tableHandle
+  is
+    tableId    tableHandle;
+    anchorRef  anchorRef_t;
+  begin
+    loadContext(p_ctxId);
+
+    anchorRef.rowOffset := p_anchorRowOffset;
+    anchorRef.colOffset := p_anchorColOffset;
+    anchorRef.tableId := p_anchorTableId;
+    anchorRef.anchorPosition := p_anchorPosition;
+
+    tableId := putTableImpl(currentCtx.sheetDefinitionMap(p_sheetId), p_query, null, p_paginate, p_pageSize, anchorRef, p_excludeCols);
+    return tableId;
+  end;
+
+  function addTable (
+    p_ctxId            in ctxHandle
+  , p_sheetId          in sheetHandle
+  , p_rc               in sys_refcursor
+  , p_paginate         in boolean default false
+  , p_pageSize         in pls_integer default null
+  , p_anchorRowOffset  in pls_integer default null
+  , p_anchorColOffset  in pls_integer default null
+  , p_anchorTableId    in tableHandle default null
+  , p_anchorPosition   in pls_integer default null
+  , p_excludeCols      in varchar2 default null
+  )
+  return tableHandle
+  is
+    tableId    tableHandle;
+    anchorRef  anchorRef_t;
+  begin
+    loadContext(p_ctxId);
+    
+    anchorRef.rowOffset := p_anchorRowOffset;
+    anchorRef.colOffset := p_anchorColOffset;
+    anchorRef.tableId := p_anchorTableId;
+    anchorRef.anchorPosition := p_anchorPosition;
+    
+    tableId := putTableImpl(currentCtx.sheetDefinitionMap(p_sheetId), null, p_rc, p_paginate, p_pageSize, anchorRef, p_excludeCols);
+    return tableId;
+  end;
+
+  procedure putCellImpl (
+    ctxId           in ctxHandle
+  , sheetId         in sheetHandle
+  , rowIdx          in pls_integer
+  , colIdx          in pls_integer
+  , data            in data_t
+  , xfId            in pls_integer
+  , anchorTableId   in tableHandle default null
+  , anchorPosition  in pls_integer default null
+  )
+  is
+    cell   cell_t;
+    cell2  floatingCell_t;
+    idx    pls_integer;
+  begin
+    loadContext(ctxId);
+    if anchorTableId is null then  
+      cell.r := rowIdx;
+      cell.cn := colIdx;
+      cell.c := base26encode(cell.cn);
+      cell.xfId := nvl(xfId, 0);
+      cell.v := data;
+      currentCtx.sheetDefinitionMap(sheetId).data.rows(rowIdx).id := rowIdx;
+      currentCtx.sheetDefinitionMap(sheetId).data.rows(rowIdx).cells(colIdx) := cell; 
+    else   
+      cell2.data := data;
+      cell2.xfId := nvl(xfId, 0);
+      cell2.anchorRef.tableId := anchorTableId;
+      cell2.anchorRef.anchorPosition := anchorPosition;
+      cell2.anchorRef.rowOffset := rowIdx;
+      cell2.anchorRef.colOffset := colIdx;
+      currentCtx.sheetDefinitionMap(sheetId).floatingCells.extend;
+      idx := currentCtx.sheetDefinitionMap(sheetId).floatingCells.last;
+      currentCtx.sheetDefinitionMap(sheetId).floatingCells(idx) := cell2; 
+    end if;
+  end;
+
+  procedure putNumberCell (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowIdx          in pls_integer
+  , p_colIdx          in pls_integer
+  , p_value           in number
+  , p_style           in cellStyleHandle default null 
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  )
+  is
+    data  data_t;
+  begin
+    prepareNumberValue(data, p_value);
+    putCellImpl(p_ctxId, p_sheetId, p_rowIdx, p_colIdx, data, p_style, p_anchorTableId, p_anchorPosition);
+  end;
+
+  procedure putStringCell (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowIdx          in pls_integer
+  , p_colIdx          in pls_integer
+  , p_value           in varchar2
+  , p_style           in cellStyleHandle default null 
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  )
+  is
+    data  data_t;
+  begin
+    prepareStringValue(data, p_value);
+    putCellImpl(p_ctxId, p_sheetId, p_rowIdx, p_colIdx, data, p_style, p_anchorTableId, p_anchorPosition);
+  end;
+
+  procedure putDateCell (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowIdx          in pls_integer
+  , p_colIdx          in pls_integer
+  , p_value           in date
+  , p_style           in cellStyleHandle default null 
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  )
+  is
+    data  data_t;
+  begin
+    prepareDateValue(data, p_value);
+    putCellImpl(p_ctxId, p_sheetId, p_rowIdx, p_colIdx, data, p_style, p_anchorTableId, p_anchorPosition);
+  end;
+  
+  procedure putCell (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowIdx          in pls_integer
+  , p_colIdx          in pls_integer
+  , p_value           in anydata default null
+  , p_style           in cellStyleHandle default null
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null  
+  )
+  is
+    data  data_t;
+  begin
+    if p_value is not null then
+      prepareData(data, p_value);
+      putCellImpl(p_ctxId, p_sheetId, p_rowIdx, p_colIdx, data, p_style, p_anchorTableId, p_anchorPosition);    
+    else
+      putNumberCell(p_ctxId, p_sheetId, p_rowIdx, p_colIdx, null, p_style, p_anchorTableId, p_anchorPosition);
+    end if;
+  end;
+
+  procedure setSheetProperties (
+    p_ctxId                in ctxHandle
+  , p_sheetId              in sheetHandle
+  , p_activePaneAnchorRef  in varchar2 default null
+  , p_showGridLines        in boolean default true
+  , p_showRowColHeaders    in boolean default true
+  , p_defaultRowHeight     in number default null
+  )
+  is
+    cellRef  cell_ref_t;
+  begin
+    loadContext(p_ctxId);
+    if p_activePaneAnchorRef is not null then
+      cellRef := parseRangeExpr(p_activePaneAnchorRef).start_ref;
+      currentCtx.sheetDefinitionMap(p_sheetId).activePaneAnchorRef := cellRef;
+    end if;
+    currentCtx.sheetDefinitionMap(p_sheetId).defaultRowHeight := p_defaultRowHeight;
+    currentCtx.sheetDefinitionMap(p_sheetId).showGridLines := p_showGridLines;
+    currentCtx.sheetDefinitionMap(p_sheetId).showRowColHeaders := p_showRowColHeaders;
+    currentCtx.sheetDefinitionMap(p_sheetId).hasProps := ( p_activePaneAnchorRef is not null 
+                                                           or p_showGridLines is not null 
+                                                           or p_showRowColHeaders is not null );
+  end;
+
+  procedure mergeCells (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle
+  , p_range    in varchar2
+  )
+  is
+    idx       pls_integer;
+    range     range_t := parseRangeExpr(p_range);
+    cellSpan  cellSpan_t;
+  begin
+    loadContext(p_ctxId);
+    
+    cellSpan.anchorRef.rowOffset := range.start_ref.r;
+    cellSpan.anchorRef.colOffset := range.start_ref.cn;
+    cellSpan.rowSpan := range.end_ref.r - range.start_ref.r + 1;
+    cellSpan.colSpan := range.end_ref.cn - range.start_ref.cn + 1;
+    
+    currentCtx.sheetDefinitionMap(p_sheetId).mergedCells.extend;
+    idx := currentCtx.sheetDefinitionMap(p_sheetId).mergedCells.last;
+    currentCtx.sheetDefinitionMap(p_sheetId).mergedCells(idx) := cellSpan;
+  end;
+
+  procedure mergeCells (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowOffset       in pls_integer
+  , p_colOffset       in pls_integer
+  , p_rowSpan         in pls_integer
+  , p_colSpan         in pls_integer
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  )
+  is
+    idx       pls_integer;
+    cellSpan  cellSpan_t;
+  begin
+    loadContext(p_ctxId);
+    
+    cellSpan.anchorRef.rowOffset := p_rowOffset;
+    cellSpan.anchorRef.colOffset := p_colOffset;
+    cellSpan.anchorRef.tableId := p_anchorTableId;
+    cellSpan.anchorRef.anchorPosition := p_anchorPosition;
+    cellSpan.rowSpan := p_rowSpan;
+    cellSpan.colSpan := p_colSpan;
+    
+    currentCtx.sheetDefinitionMap(p_sheetId).mergedCells.extend;
+    idx := currentCtx.sheetDefinitionMap(p_sheetId).mergedCells.last;
+    currentCtx.sheetDefinitionMap(p_sheetId).mergedCells(idx) := cellSpan;
+  end;
+
+  procedure setTableHeader (
+    p_ctxId       in ctxHandle
+  , p_sheetId     in sheetHandle
+  , p_tableId     in tableHandle
+  , p_style       in cellStyleHandle default null
+  , p_autoFilter  in boolean default false
+  )
+  is
+    tableHeader  table_header_t;
+  begin
+    loadContext(p_ctxId);
+    assertTableExists(p_ctxId, p_sheetId, p_tableId);
+    tableHeader.show := true;
+    --tableHeader.xfId := p_style;
+    tableHeader.autoFilter := p_autoFilter;
+    
+    if p_style is not null then
+      currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).rowMap(0).xfId := p_style;
+    end if;
+    
+    currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).header := tableHeader;
+  end;
+
+  -- DEPRECATED
   procedure setHeader (
     p_ctxId       in ctxHandle
   , p_sheetName   in varchar2
@@ -3396,7 +4330,8 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    setHeader(p_ctxId, ctx_cache(p_ctxId).sheetIndexMap(p_sheetName), p_style, p_frozen, p_autofilter);
+    loadContext(p_ctxId);
+    setHeader(p_ctxId, currentCtx.sheetIndexMap(p_sheetName), p_style, p_frozen, p_autofilter);
   end;
 
   procedure setHeader (
@@ -3407,16 +4342,77 @@ create or replace package body ExcelGen is
   , p_autoFilter  in boolean default false
   )
   is
-    sheetHeader  sheet_header_t;
+    tableId         pls_integer;
+    tableAnchorRef  anchorRef_t;
   begin
-    sheetHeader.show := true;
-    sheetHeader.xfId := p_style;
-    sheetHeader.isFrozen := p_frozen;
-    sheetHeader.autoFilter := p_autoFilter;
-    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).header := sheetHeader;
+    loadContext(p_ctxId);
+    tableId := currentCtx.sheetDefinitionMap(p_sheetId).tableList.first;
+    setTableHeader(p_ctxId, p_sheetId, tableId, p_style, p_autofilter);
+    if p_frozen then
+      -- make header of first table frozen
+      tableAnchorRef := currentCtx.sheetDefinitionMap(p_sheetId).tableList(tableId).anchorRef;    
+      currentCtx.sheetDefinitionMap(p_sheetId).activePaneAnchorRef := makeCellRef('A', tableAnchorRef.rowOffset + 1);
+      currentCtx.sheetDefinitionMap(p_sheetId).hasProps := true;
+    end if;
   end;
 
-  -- to be deprecated
+  procedure setTableRowProperties (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle
+  , p_tableId  in pls_integer
+  , p_rowId    in pls_integer
+  , p_style    in cellStyleHandle
+  )
+  is
+    props  rowProperties_t;
+  begin
+    loadContext(p_ctxId);
+    assertTableExists(p_ctxId, p_sheetId, p_tableId);
+    props.xfId := p_style;
+    currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).rowMap(p_rowId) := props;
+  end;
+
+  procedure setTableColumnProperties (
+    p_ctxId       in ctxHandle
+  , p_sheetId     in sheetHandle
+  , p_tableId     in pls_integer
+  , p_columnId    in pls_integer
+  , p_columnName  in varchar2 default null
+  , p_style       in cellStyleHandle default null
+  )
+  is
+    tableColumn  table_column_t;
+  begin
+    loadContext(p_ctxId);
+    assertTableExists(p_ctxId, p_sheetId, p_tableId);
+    tableColumn.name := p_columnName;
+    tableColumn.xfId := p_style;
+    currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).columnMap(p_columnId) := tableColumn;
+  end;
+
+  procedure setTableProperties (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle
+  , p_tableId  in tableHandle
+  , p_style    in varchar2 default null
+  , p_showFirstColumn    in boolean default false
+  , p_showLastColumn     in boolean default false
+  , p_showRowStripes     in boolean default true
+  , p_showColumnStripes  in boolean default false
+  )
+  is
+  begin
+    loadContext(p_ctxId);
+    assertTableExists(p_ctxId, p_sheetId, p_tableId);
+    currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).formatAsTable := true;
+    currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).tableStyle := p_style;
+    currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).showFirstColumn := p_showFirstColumn;
+    currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).showLastColumn := p_showLastColumn;
+    currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).showRowStripes := p_showRowStripes;
+    currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).showColumnStripes := p_showColumnStripes;
+  end;
+
+  -- DEPRECATED
   procedure setTableFormat (
     p_ctxId      in ctxHandle
   , p_sheetName  in varchar2
@@ -3424,7 +4420,8 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    setTableFormat(p_ctxId, ctx_cache(p_ctxId).sheetIndexMap(p_sheetName), p_style);
+    loadContext(p_ctxId);
+    setTableFormat(p_ctxId, currentCtx.sheetIndexMap(p_sheetName), p_style);
   end;
 
   procedure setTableFormat (
@@ -3433,9 +4430,11 @@ create or replace package body ExcelGen is
   , p_style    in varchar2 default null
   )
   is
+    tableId  pls_integer;
   begin
-    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).formatAsTable := true;
-    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).tableStyle := p_style;
+    loadContext(p_ctxId);
+    tableId := currentCtx.sheetDefinitionMap(p_sheetId).tableList.first;
+    setTableProperties(p_ctxId, p_sheetId, tableId, p_style);
   end;
 
   procedure setDateFormat (
@@ -3444,7 +4443,8 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    ctx_cache(p_ctxId).defaultFmts.dateFmt := p_format;
+    loadContext(p_ctxId);
+    currentCtx.defaultFmts.dateFmt := p_format;
   end;
 
   procedure setDateFormat (
@@ -3454,7 +4454,8 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).defaultFmts.dateFmt := p_format;
+    loadContext(p_ctxId);
+    currentCtx.sheetDefinitionMap(p_sheetId).defaultFmts.dateFmt := p_format;
   end;
 
   procedure setNumFormat (
@@ -3463,7 +4464,8 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    ctx_cache(p_ctxId).defaultFmts.numFmt := p_format;
+    loadContext(p_ctxId);
+    currentCtx.defaultFmts.numFmt := p_format;
   end;
 
   procedure setNumFormat (
@@ -3473,7 +4475,8 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).defaultFmts.numFmt := p_format;
+    loadContext(p_ctxId);
+    currentCtx.sheetDefinitionMap(p_sheetId).defaultFmts.numFmt := p_format;
   end;
 
   procedure setTimestampFormat (
@@ -3482,7 +4485,8 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    ctx_cache(p_ctxId).defaultFmts.timestampFmt := p_format;
+    loadContext(p_ctxId);
+    currentCtx.defaultFmts.timestampFmt := p_format;
   end;
 
   procedure setTimestampFormat (
@@ -3492,7 +4496,30 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).defaultFmts.timestampFmt := p_format;
+    loadContext(p_ctxId);
+    currentCtx.sheetDefinitionMap(p_sheetId).defaultFmts.timestampFmt := p_format;
+  end;
+
+  procedure setRowProperties (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle
+  , p_rowId    in pls_integer
+  , p_style    in cellStyleHandle default null
+  , p_height   in number default null
+  )
+  is
+    r  row_t;
+  begin
+    loadContext(p_ctxId);
+    begin
+      r := currentCtx.sheetDefinitionMap(p_sheetId).data.rows(p_rowId);
+    exception
+      when no_data_found then
+        r.id := p_rowId;
+    end;
+    r.props.xfId := p_style;
+    r.props.height := p_height;    
+    currentCtx.sheetDefinitionMap(p_sheetId).data.rows(r.id) := r;
   end;
 
   procedure setColumnProperties (
@@ -3504,15 +4531,26 @@ create or replace package body ExcelGen is
   , p_width     in number default null
   )
   is
-    sheetColumn  sheet_column_t;
+    props  colProperties_t;
+    tableId      pls_integer;
   begin
-    sheetColumn.xfId := p_style;
-    sheetColumn.header := p_header;
-    if p_width is not null then
-      sheetColumn.width := p_width;
-      ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).customColWidth := true;
+    loadContext(p_ctxId);
+    
+    props.xfId := p_style;
+    props.width := p_width;
+    
+    if p_header is not null then
+      tableId := currentCtx.sheetDefinitionMap(p_sheetId).tableList.first;
+      if tableId is not null then
+        setTableColumnProperties(p_ctxId, p_sheetId, tableId, p_columnId, p_header);
+      end if;
     end if;
-    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).columnMap(p_columnId) := sheetColumn;
+    
+    if p_width is not null or p_style is not null then
+      currentCtx.sheetDefinitionMap(p_sheetId).hasCustomColProps := true;
+    end if;
+    
+    currentCtx.sheetDefinitionMap(p_sheetId).columnMap(p_columnId) := props;
   end;
     
   procedure setColumnFormat (
@@ -3524,8 +4562,15 @@ create or replace package body ExcelGen is
   , p_width     in number default null
   )
   is
+    xfId    pls_integer;
   begin
-    setColumnProperties(p_ctxId, p_sheetId, p_columnId, makeCellStyle(p_ctxId, p_format), p_header, p_width);
+    loadContext(p_ctxId);
+    -- get existing xfId for this column
+    if currentCtx.sheetDefinitionMap(p_sheetId).columnMap.exists(p_columnId) then
+      xfId := currentCtx.sheetDefinitionMap(p_sheetId).columnMap(p_columnId).xfId;
+    end if;
+    xfId := mergeCellFormat(currentCtx, xfId, p_format, force => true);    
+    setColumnProperties(p_ctxId, p_sheetId, p_columnId, xfId, p_header, p_width);
   end;
 
   procedure setColumnHlink (
@@ -3534,11 +4579,13 @@ create or replace package body ExcelGen is
   , p_columnId  in pls_integer
   , p_target    in varchar2 default null
   --, p_tooltip   in varchar2 default null
+  , p_tableId   in pls_integer default 1
   )
   is
-  begin   
-    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetId).columnLinkMap(p_columnId) := p_target;
-    ctx_cache(p_ctxId).workbook.styles.hasHlink := true;
+  begin
+    loadContext(p_ctxId);
+    currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).columnLinkMap(p_columnId) := p_target;
+    currentCtx.workbook.styles.hasHlink := true;
   end;
 
   procedure setBindVariableImpl (
@@ -3546,25 +4593,23 @@ create or replace package body ExcelGen is
   , p_sheetIndex  in pls_integer
   , p_bindName    in varchar2
   , p_bindValue   in anydata
+  , p_tableId     in pls_integer
   )
   is
-    sheetDefinition  sheet_definition_t;
-    bindVar          bind_variable_t;
-    collIdx          pls_integer;
+    bindVarList  bind_variable_list_t;
+    varIdx       pls_integer;
   begin
-    bindVar.name := p_bindName;
-    bindVar.value := p_bindValue;
-    sheetDefinition := ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetIndex);
-    
-    sheetDefinition.sqlMetadata.bindVariables.extend;
-    collIdx := sheetDefinition.sqlMetadata.bindVariables.last;
-    sheetDefinition.sqlMetadata.bindVariables(collIdx) := bindVar;
-    
-    ctx_cache(p_ctxId).sheetDefinitionMap(p_sheetIndex) := sheetDefinition;
-    
+    loadContext(p_ctxId);
+    assertTableExists(p_ctxId, p_sheetIndex, p_tableId);
+    bindVarList := currentCtx.sheetDefinitionMap(p_sheetIndex).tableList(p_tableId).sqlMetadata.bindVariables;
+    bindVarList.extend;
+    varIdx := bindVarList.last;
+    bindVarList(varIdx).name := p_bindName;
+    bindVarList(varIdx).value := p_bindValue;     
+    currentCtx.sheetDefinitionMap(p_sheetIndex).tableList(p_tableId).sqlMetadata.bindVariables := bindVarList;
   end;
 
-  -- to be deprecated
+  -- DEPRECATED
   procedure setBindVariable (
     p_ctxId      in ctxHandle
   , p_sheetName  in varchar2
@@ -3573,7 +4618,73 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    setBindVariableImpl(p_ctxId, ctx_cache(p_ctxId).sheetIndexMap(p_sheetName), p_bindName, anydata.ConvertNumber(p_bindValue));
+    loadContext(p_ctxId);
+    setBindVariableImpl(p_ctxId, currentCtx.sheetIndexMap(p_sheetName), p_bindName, anydata.ConvertNumber(p_bindValue), 1);
+  end;
+  
+  -- DEPRECATED
+  procedure setBindVariable (
+    p_ctxId      in ctxHandle
+  , p_sheetName  in varchar2
+  , p_bindName   in varchar2
+  , p_bindValue  in varchar2
+  )
+  is
+  begin
+    loadContext(p_ctxId);
+    setBindVariableImpl(p_ctxId, currentCtx.sheetIndexMap(p_sheetName), p_bindName, anydata.ConvertVarchar2(p_bindValue), 1);
+  end;
+
+  -- DEPRECATED
+  procedure setBindVariable (
+    p_ctxId      in ctxHandle
+  , p_sheetName  in varchar2
+  , p_bindName   in varchar2
+  , p_bindValue  in date
+  )
+  is
+  begin
+    loadContext(p_ctxId);
+    setBindVariableImpl(p_ctxId, currentCtx.sheetIndexMap(p_sheetName), p_bindName, anydata.ConvertDate(p_bindValue), 1);
+  end;
+    
+  procedure setBindVariable (
+    p_ctxId      in ctxHandle
+  , p_sheetId    in sheetHandle
+  , p_tableId    in tableHandle
+  , p_bindName   in varchar2
+  , p_bindValue  in number
+  )
+  is
+  begin
+    assertTableExists(p_ctxId, p_sheetId, p_tableId);
+    setBindVariableImpl(p_ctxId, p_sheetId, p_bindName, anydata.ConvertNumber(p_bindValue), p_tableId);
+  end;
+  
+  procedure setBindVariable (
+    p_ctxId      in ctxHandle
+  , p_sheetId    in sheetHandle
+  , p_tableId    in tableHandle
+  , p_bindName   in varchar2
+  , p_bindValue  in varchar2
+  )
+  is
+  begin
+    assertTableExists(p_ctxId, p_sheetId, p_tableId);
+    setBindVariableImpl(p_ctxId, p_sheetId, p_bindName, anydata.ConvertVarchar2(p_bindValue), p_tableId);
+  end;
+
+  procedure setBindVariable (
+    p_ctxId      in ctxHandle
+  , p_sheetId    in sheetHandle
+  , p_tableId    in tableHandle
+  , p_bindName   in varchar2
+  , p_bindValue  in date
+  )
+  is
+  begin
+    assertTableExists(p_ctxId, p_sheetId, p_tableId);
+    setBindVariableImpl(p_ctxId, p_sheetId, p_bindName, anydata.ConvertDate(p_bindValue), p_tableId);
   end;
 
   procedure setBindVariable (
@@ -3584,19 +4695,7 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    setBindVariableImpl(p_ctxId, p_sheetId, p_bindName, anydata.ConvertNumber(p_bindValue));
-  end;
-  
-  -- to be deprecated
-  procedure setBindVariable (
-    p_ctxId      in ctxHandle
-  , p_sheetName  in varchar2
-  , p_bindName   in varchar2
-  , p_bindValue  in varchar2
-  )
-  is
-  begin
-    setBindVariableImpl(p_ctxId, ctx_cache(p_ctxId).sheetIndexMap(p_sheetName), p_bindName, anydata.ConvertVarchar2(p_bindValue));
+    setBindVariable(p_ctxId, p_sheetId, 1, p_bindName, p_bindValue);
   end;
   
   procedure setBindVariable (
@@ -3607,19 +4706,7 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    setBindVariableImpl(p_ctxId, p_sheetId, p_bindName, anydata.ConvertVarchar2(p_bindValue));
-  end;
-
-  -- to be deprecated
-  procedure setBindVariable (
-    p_ctxId      in ctxHandle
-  , p_sheetName  in varchar2
-  , p_bindName   in varchar2
-  , p_bindValue  in date
-  )
-  is
-  begin
-    setBindVariableImpl(p_ctxId, ctx_cache(p_ctxId).sheetIndexMap(p_sheetName), p_bindName, anydata.ConvertDate(p_bindValue));
+    setBindVariable(p_ctxId, p_sheetId, 1, p_bindName, p_bindValue);
   end;
 
   procedure setBindVariable (
@@ -3630,7 +4717,7 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    setBindVariableImpl(p_ctxId, p_sheetId, p_bindName, anydata.ConvertDate(p_bindValue));
+    setBindVariable(p_ctxId, p_sheetId, 1, p_bindName, p_bindValue);
   end;
   
 $if NOT $$no_crypto OR $$no_crypto IS NULL $then
@@ -3642,6 +4729,7 @@ $if NOT $$no_crypto OR $$no_crypto IS NULL $then
   is
     encInfo  encryption_info_t;
   begin
+    loadContext(p_ctxId);
     case p_compatible
     when OFFICE2007SP1 then
       encInfo.version := '3.2';
@@ -3669,7 +4757,7 @@ $if NOT $$no_crypto OR $$no_crypto IS NULL $then
     
     encInfo.password := p_password;
     
-    ctx_cache(p_ctxId).encryptionInfo := encInfo;
+    currentCtx.encryptionInfo := encInfo;
       
   end;
 $end
@@ -3679,48 +4767,49 @@ $end
   )
   return blob
   is
-    ctx         context_t := ctx_cache(p_ctxId);
+    --ctx         context_t := ctx_cache(p_ctxId);
     sheetIndex  pls_integer;
     output      blob;
   begin
+    loadContext(p_ctxId);
     -- shared styles
-    addDefaultStyles(ctx.workbook.styles);
+    addDefaultStyles(currentCtx.workbook.styles);
   
     -- worksheets
-    sheetIndex := ctx.sheetDefinitionMap.first;
+    sheetIndex := currentCtx.sheetDefinitionMap.first;
     while sheetIndex is not null loop
-      createWorksheet(ctx, sheetIndex);
-      sheetIndex := ctx.sheetDefinitionMap.next(sheetIndex);
+      createWorksheet(currentCtx, sheetIndex);
+      sheetIndex := currentCtx.sheetDefinitionMap.next(sheetIndex);
     end loop;
     
     -- workbook
-    case ctx.fileType
+    case currentCtx.fileType
     when FILE_XLSX then
-      createWorkbook(ctx);
+      createWorkbook(currentCtx);
     when FILE_XLSB then
-      createWorkbookBin(ctx);
+      createWorkbookBin(currentCtx);
     end case;
     
-    createContentTypes(ctx);
-    createRels(ctx);
+    createContentTypes(currentCtx);
+    createRels(currentCtx);
     
     debug('start create package');  
-    createPackage(ctx.pck);  
+    createPackage(currentCtx.pck);  
     debug('end create package');
     
 $if NOT $$no_crypto OR $$no_crypto IS NULL $then
-    if ctx.encryptionInfo.version is not null then
+    if currentCtx.encryptionInfo.version is not null then
       output := xutl_offcrypto.encrypt_package(
-                  p_package  => ctx.pck.content
-                , p_password => ctx.encryptionInfo.password
-                , p_version  => ctx.encryptionInfo.version
-                , p_cipher   => ctx.encryptionInfo.cipherName
-                , p_hash     => ctx.encryptionInfo.hashFuncName
+                  p_package  => currentCtx.pck.content
+                , p_password => currentCtx.encryptionInfo.password
+                , p_version  => currentCtx.encryptionInfo.version
+                , p_cipher   => currentCtx.encryptionInfo.cipherName
+                , p_hash     => currentCtx.encryptionInfo.hashFuncName
                 );
-      dbms_lob.freetemporary(ctx.pck.content);
+      dbms_lob.freetemporary(currentCtx.pck.content);
     else    
 $end
-      output := ctx.pck.content;
+      output := currentCtx.pck.content;
 $if NOT $$no_crypto OR $$no_crypto IS NULL $then
     end if;
 $end

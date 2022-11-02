@@ -39,10 +39,11 @@ create or replace package ExcelGen is
     Marc Bleron       2021-09-04     Added wrapText attribute
     Marc Bleron       2022-02-06     Fixed table format issue for empty dataset
     Marc Bleron       2022-02-15     Added custom column header and width
-    Lee Lindley       2022-02-22     Added BINARY_DOUBLE data type
-                                     Added debug for queryString/cursor exceptions and counts
     Marc Bleron       2022-02-27     Added custom column style
     Marc Bleron       2022-08-23     Fixed number format for column width (xlsx)
+    Marc Bleron       2022-09-04     Added row properties
+                                     Added multitable sheet model and cell API
+                                     Refactoring
 ====================================================================================== */
 
   -- file types
@@ -56,6 +57,12 @@ create or replace package ExcelGen is
   OFFICE2013      constant pls_integer := 3;
   OFFICE2016      constant pls_integer := 4;
   
+  -- table anchor position
+  TOP_LEFT        constant pls_integer := 1;
+  TOP_RIGHT       constant pls_integer := 2;
+  BOTTOM_RIGHT    constant pls_integer := 3;
+  BOTTOM_LEFT     constant pls_integer := 4;
+  
   subtype CT_BorderPr is ExcelTypes.CT_BorderPr;
   subtype CT_Border is ExcelTypes.CT_Border;
   subtype CT_Font is ExcelTypes.CT_Font;
@@ -66,8 +73,9 @@ create or replace package ExcelGen is
   subtype ctxHandle is pls_integer;
   subtype sheetHandle is pls_integer;
   subtype cellStyleHandle is pls_integer;
+  subtype tableHandle is pls_integer;
   
-  subtype uint8 is pls_integer range 0..255;
+  subtype uint8 is ExcelTypes.uint8;
 
   procedure setDebug (
     p_status in boolean
@@ -77,6 +85,7 @@ create or replace package ExcelGen is
     r  in uint8
   , g  in uint8
   , b  in uint8
+  , a  in number default null
   )
   return varchar2;
   
@@ -101,8 +110,8 @@ create or replace package ExcelGen is
   return CT_Border;
 
   function makeFont (
-    p_name   in varchar2
-  , p_sz     in pls_integer
+    p_name   in varchar2 default null
+  , p_sz     in pls_integer default null
   , p_b      in boolean default false
   , p_i      in boolean default false
   , p_color  in varchar2 default null
@@ -134,6 +143,18 @@ create or replace package ExcelGen is
   )
   return cellStyleHandle;
 
+  function makeCellStyleCss (
+    p_ctxId  in ctxHandle
+  , p_css    in varchar2
+  )
+  return cellStyleHandle;
+
+  function makeCellRef (
+    colIdx  in pls_integer
+  , rowIdx  in pls_integer
+  )
+  return varchar2;
+
   function createContext (
     p_type  in pls_integer default FILE_XLSX 
   )
@@ -142,6 +163,14 @@ create or replace package ExcelGen is
   procedure closeContext (
     p_ctxId  in ctxHandle 
   );
+
+  function addSheet (
+    p_ctxId       in ctxHandle
+  , p_sheetName   in varchar2
+  , p_tabColor    in varchar2 default null
+  , p_sheetIndex  in pls_integer default null
+  )
+  return sheetHandle;
 
   procedure addSheetFromQuery (
     p_ctxId       in ctxHandle
@@ -189,33 +218,105 @@ create or replace package ExcelGen is
   )
   return sheetHandle;
 
-  -- to be deprecated
+  function addTable (
+    p_ctxId            in ctxHandle
+  , p_sheetId          in sheetHandle
+  , p_query            in varchar2
+  , p_paginate         in boolean default false
+  , p_pageSize         in pls_integer default null
+  , p_anchorRowOffset  in pls_integer default null
+  , p_anchorColOffset  in pls_integer default null
+  , p_anchorTableId    in tableHandle default null
+  , p_anchorPosition   in pls_integer default null
+  , p_excludeCols      in varchar2 default null
+  )
+  return tableHandle;
+
+  function addTable (
+    p_ctxId            in ctxHandle
+  , p_sheetId          in sheetHandle
+  , p_rc               in sys_refcursor
+  , p_paginate         in boolean default false
+  , p_pageSize         in pls_integer default null
+  , p_anchorRowOffset  in pls_integer default null
+  , p_anchorColOffset  in pls_integer default null
+  , p_anchorTableId    in tableHandle default null
+  , p_anchorPosition   in pls_integer default null
+  , p_excludeCols      in varchar2 default null
+  )
+  return tableHandle;
+
+  procedure putNumberCell (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowIdx          in pls_integer
+  , p_colIdx          in pls_integer
+  , p_value           in number
+  , p_style           in cellStyleHandle default null 
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  );
+
+  procedure putStringCell (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowIdx          in pls_integer
+  , p_colIdx          in pls_integer
+  , p_value           in varchar2
+  , p_style           in cellStyleHandle default null 
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  );
+
+  procedure putDateCell (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowIdx          in pls_integer
+  , p_colIdx          in pls_integer
+  , p_value           in date
+  , p_style           in cellStyleHandle default null 
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  );
+
+  procedure putCell (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowIdx          in pls_integer
+  , p_colIdx          in pls_integer
+  , p_value           in anydata default null
+  , p_style           in cellStyleHandle default null 
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  );
+
   procedure setBindVariable (
     p_ctxId      in ctxHandle
-  , p_sheetName  in varchar2
+  , p_sheetId    in sheetHandle
+  , p_tableId    in tableHandle
   , p_bindName   in varchar2
   , p_bindValue  in number
-  );
-
-  -- to be deprecated
-  procedure setBindVariable (
-    p_ctxId      in ctxHandle
-  , p_sheetName  in varchar2
-  , p_bindName   in varchar2
-  , p_bindValue  in varchar2
-  );
-
-  -- to be deprecated
-  procedure setBindVariable (
-    p_ctxId      in ctxHandle
-  , p_sheetName  in varchar2
-  , p_bindName   in varchar2
-  , p_bindValue  in date
   );
   
   procedure setBindVariable (
     p_ctxId      in ctxHandle
   , p_sheetId    in sheetHandle
+  , p_tableId    in tableHandle
+  , p_bindName   in varchar2
+  , p_bindValue  in varchar2
+  );
+
+  procedure setBindVariable (
+    p_ctxId      in ctxHandle
+  , p_sheetId    in sheetHandle
+  , p_tableId    in tableHandle
+  , p_bindName   in varchar2
+  , p_bindValue  in date
+  );
+
+  procedure setBindVariable (
+    p_ctxId      in ctxHandle
+  , p_sheetId    in sheetHandle
   , p_bindName   in varchar2
   , p_bindValue  in number
   );
@@ -234,7 +335,93 @@ create or replace package ExcelGen is
   , p_bindValue  in date
   );
 
-  -- to be deprecated
+  -- DEPRECATED
+  procedure setBindVariable (
+    p_ctxId      in ctxHandle
+  , p_sheetName  in varchar2
+  , p_bindName   in varchar2
+  , p_bindValue  in number
+  );
+
+  -- DEPRECATED
+  procedure setBindVariable (
+    p_ctxId      in ctxHandle
+  , p_sheetName  in varchar2
+  , p_bindName   in varchar2
+  , p_bindValue  in varchar2
+  );
+
+  -- DEPRECATED
+  procedure setBindVariable (
+    p_ctxId      in ctxHandle
+  , p_sheetName  in varchar2
+  , p_bindName   in varchar2
+  , p_bindValue  in date
+  );
+
+  procedure setSheetProperties (
+    p_ctxId                in ctxHandle
+  , p_sheetId              in sheetHandle
+  , p_activePaneAnchorRef  in varchar2 default null
+  , p_showGridLines        in boolean default true
+  , p_showRowColHeaders    in boolean default true
+  , p_defaultRowHeight     in number default null
+  );
+
+  procedure mergeCells (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle
+  , p_range    in varchar2
+  );
+
+  procedure mergeCells (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowOffset       in pls_integer
+  , p_colOffset       in pls_integer
+  , p_rowSpan         in pls_integer
+  , p_colSpan         in pls_integer
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  );
+
+  procedure setTableProperties (
+    p_ctxId              in ctxHandle
+  , p_sheetId            in sheetHandle
+  , p_tableId            in tableHandle
+  , p_style              in varchar2 default null
+  , p_showFirstColumn    in boolean default false
+  , p_showLastColumn     in boolean default false
+  , p_showRowStripes     in boolean default true
+  , p_showColumnStripes  in boolean default false
+  );
+
+  procedure setTableHeader (
+    p_ctxId       in ctxHandle
+  , p_sheetId     in sheetHandle
+  , p_tableId     in tableHandle
+  , p_style       in cellStyleHandle default null
+  , p_autoFilter  in boolean default false
+  );
+
+  procedure setTableColumnProperties (
+    p_ctxId       in ctxHandle
+  , p_sheetId     in sheetHandle
+  , p_tableId     in pls_integer
+  , p_columnId    in pls_integer
+  , p_columnName  in varchar2 default null
+  , p_style       in cellStyleHandle default null
+  );
+
+  procedure setTableRowProperties (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle
+  , p_tableId  in pls_integer
+  , p_rowId    in pls_integer
+  , p_style    in cellStyleHandle
+  );
+
+  -- DEPRECATED
   procedure setHeader (
     p_ctxId       in ctxHandle
   , p_sheetName   in varchar2
@@ -251,7 +438,7 @@ create or replace package ExcelGen is
   , p_autoFilter  in boolean default false
   );
 
-  -- to be deprecated
+  -- DEPRECATED
   procedure setTableFormat (
     p_ctxId      in ctxHandle
   , p_sheetName  in varchar2
@@ -313,6 +500,14 @@ create or replace package ExcelGen is
   , p_style     in cellStyleHandle default null
   , p_header    in varchar2 default null
   , p_width     in number default null
+  );
+
+  procedure setRowProperties (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle
+  , p_rowId    in pls_integer
+  , p_style    in cellStyleHandle default null
+  , p_height   in number default null
   );
 
   /*
