@@ -70,15 +70,16 @@ See the following sections for more examples and detailed description of ExcelGe
 
 ### ExcelGen Model
 <p align="center"><img src="./resources/model.png"/></p>
-The workbook structure is maintained in a context object referenced through its handle during the generation process.
-A workbook contains at least one sheet, and a stylesheet.
-A sheet may contain:
+The workbook structure is maintained in a context object referenced through its handle during the generation process.  
+
+A workbook contains at least one sheet, and a stylesheet.  
+A sheet may contain:  
 * zero or more tables
 * individual cells
 
 A table is a contiguous rectangular set of cells (range) arranged in rows and columns, with an optional header row, and whose data comes from a SQL source (cursor or query string).
 
-Provided there is only one table declared in a sheet, it is possible to partition the underlying data source across multiple sheets past the first one. 
+Provided there is only one table declared in a sheet, it is possible to partition the underlying data source across multiple sheets past the first one.  
 Similarly, a sheet containing a single table will benefit from a streaming generation model, resulting in a low memory footprint. Otherwise, if the sheet contains multiple tables, or a mix of tables and individual cells, all data will first be built up in memory, then written out to the sheet.
 
 Various styling options are available at sheet, table or cell level, using the built-in API or CSS.
@@ -247,13 +248,16 @@ For example :
 `${PSTART}-${PSTOP}` will be expanded to `1-1000`, `1001-2000`, `2001-3000`, etc. assuming a page size of 1000 rows.  
 
 Table positioning may be absolute in the owning sheet, or relative to another table.  
-For the former method, row and column offsets correspond to row and column (1-based) indices respectively, and for the latter, offsets are 0-based from one the four anchor table corner:  
+For the former method, row and column offsets correspond to row and column (1-based) indices respectively, and for the latter, offsets are 0-based from one the four anchor table corners:  
+
 ![relativePositioning](./resources/relativePositioning.png)  
-In this example, the absolute position (row, column) of Cell1 is (7, 5), while relative positions from Table1 corners are
-TOP_LEFT: (4, 3)
-TOP_RIGHT: (4, 1)
-BOTTOM_RIGHT: (2, 1)
-BOTTOM_LEFT: (2, 3)
+
+In this example, the absolute position (row, column) of Cell1 is (7, 5), while relative positions from Table1 corners are:  
+
+TOP_LEFT: (4, 3)  
+TOP_RIGHT: (4, 1)  
+BOTTOM_RIGHT: (2, 1)  
+BOTTOM_LEFT: (2, 3)  
 
 ---
 ### putCell procedure  
@@ -1202,7 +1206,7 @@ As of ExcelGen 3, it is possible to declare cell styles using CSS syntax, in add
 Standard CSS properties and values relevant for cell styling are supported, e.g. `border`, `font`, `background`, `color` etc. along with MS Office extensions.  
 
 #### Examples
-![cssStyle1](./resources/cssStyle1.png)
+![cssStyle1](./resources/cssStyle1.png)  
 CSS declaration:  
 ```css
 font:14pt "Arial Black";
@@ -1218,7 +1222,8 @@ p_border => ExcelGen.makeBorder(p_style => 'double', p_color => '#5B9BD5'),
 p_alignment => ExcelGen.makeAlignment(p_horizontal => 'center', p_vertical => 'center')
 ```
 
-![cssStyle2](./resources/cssStyle2.png)
+
+![cssStyle2](./resources/cssStyle2.png)  
 CSS declaration:  
 ```css
 font-style:italic;text-decoration:underline;background:orange
@@ -1229,7 +1234,8 @@ p_font => ExcelGen.makeFont(p_i => true, p_u => 'single'),
 p_fill => ExcelGen.makePatternFill('solid', 'orange')
 ```
 
-![cssStyle3](./resources/cssStyle3.png)
+
+![cssStyle3](./resources/cssStyle3.png)  
 CSS declaration:  
 ```css
 font-weight:bold;border-top:medium dashed;border-bottom:medium dashed;vertical-align:top
@@ -1241,6 +1247,7 @@ p_border => ExcelGen.makeBorder(p_top => ExcelGen.makeBorderPr('mediumDashed')
                               , p_bottom => ExcelGen.makeBorderPr('mediumDashed')), 
 p_alignment => ExcelGen.makeAlignment(p_vertical => 'top')
 ```
+
 
 #### Supported CSS properties
 
@@ -1310,7 +1317,7 @@ For example, the following code snippet
     ExcelGen.putCell(ctx, sheet1, 1, i+1, p_style => ExcelGen.makeCellStyleCss(ctx, 'background-color:#FF0000'||to_char(i*25.5,'FM0X')));
   end loop;
 ```
-will generate:
+will generate:  
 ![Shades of red](./resources/shades-of-red.png)
 
 
@@ -1674,24 +1681,24 @@ end;
 [relative-positioning.sql](./test_cases/relative-positioning.sql) &#8594; [relative-positioning.xlsx](./samples/relative-positioning.xlsx)
 
 #### Master-details
-Another example of relative positioning.
+Another example of relative positioning.  
 [master-details.sql](./test_cases/master-details.sql) &#8594; [master-details.xlsx](./samples/master-details.xlsx)
 
 #### Variant column data type
-Handling of an ANYDATA source column.
+Handling of an ANYDATA source column.  
 [anydata-column.sql](./test_cases/anydata-column.sql) &#8594; [anydata-column.xlsx](./samples/anydata-column.xlsx)
 
 #### Color spectrum demo  
-Creates a rainbow-like matrix made of 36,360 cells of different colors.
+Creates a rainbow-like matrix made of 36,360 cells of different colors.  
 [color-spectrum.sql](./test_cases/color-spectrum.sql) &#8594; [![color-spectrum-thumb](./resources/color-spectrum-thumb.png)](./samples/color-spectrum.xlsx)
 
 #### Style showcase
-Shows available cell styling options.
+Shows available cell styling options.  
 [style-showcase.sql](./test_cases/style-showcase.sql) &#8594; [style-showcase.xlsx](./samples/style-showcase.xlsx)
 
 ## CHANGELOG
 
-### 3.0 (2022-09-30)
+### 3.0 (2022-11-02)
 
 * Added Cell API
 * Added Multitable sheet
