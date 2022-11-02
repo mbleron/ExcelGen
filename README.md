@@ -17,7 +17,7 @@ It supports encryption, cell merging, various formatting options through a built
 
 ## What's New in...
 
-> Version 3.0 : cell API, CSS styling support, multitable sheet, merged cells
+> Version 3.0 : cell API, CSS styling support, multitable sheet, merged cells  
 > Version 2.0 : support for XLSB format output  
 > Version 1.0 : added encryption features  
 > Version 0.1b : Beta version
@@ -427,7 +427,7 @@ It is overloaded in two ways:
 * By variable data type: NUMBER, VARCHAR2 or DATE
 * By referencing either a table, or only a sheet handle. In the latter case, the first table of the sheet will be used.  
 
-**Legacy overloads expecting a sheet name are deprecated and will be removed in a future version.**
+:warning: **Legacy overloads expecting a sheet name are deprecated and will be removed in a future version.**
 
 ```sql
 procedure setBindVariable (
@@ -960,7 +960,7 @@ Parameter|Description|Mandatory
 ### STYLING
 
 ### makeRgbColor function
-This function builds an RGBA color value in hexadecimal notation from individual Red, Green and Blue components supplied as unsigned 8-bit integers (0-255), and optional Alpha component as a floating-point number between 0 and 1.
+This function builds an RGBA color value in hexadecimal notation from individual Red, Green and Blue components supplied as unsigned 8-bit integers (0-255), and optional Alpha component as a floating-point number between 0 and 1.  
 For example:  
 `makeRgbColor(219,112,147)` will return `#DB7093`.  
 `makeRgbColor(0,255,0,.2)` will return `#00FF0033`.  
@@ -1202,7 +1202,7 @@ begin
 ## Style specifications
 
 ### CSS
-As of ExcelGen 3, it is possible to declare cell styles using CSS syntax, in addition to the built-in styling API.
+As of ExcelGen 3, it is possible to declare cell styles using CSS syntax, in addition to the built-in styling API.  
 Standard CSS properties and values relevant for cell styling are supported, e.g. `border`, `font`, `background`, `color` etc. along with MS Office extensions.  
 
 #### Examples
@@ -1254,13 +1254,13 @@ p_alignment => ExcelGen.makeAlignment(p_vertical => 'top')
 Hereafter is the exhaustive list of supported properties and values, and implementation-specific features.  
 Since there is no exact match between MS Office styling elements and CSS properties, mapping tables are also provided further down in the document.  
 
-Default values are <u>underlined</u>, and MSO extensions are *italicized*.  
+Default values are <ins>underlined</ins>, and MSO extensions are *italicized*.  
 
 Name|Description  |Standard
 :--|:--|:--
 [border](https://developer.mozilla.org/en-US/docs/Web/CSS/border)|`border` shorthand property. <br/>Not all combinations of individually supported `border-style` and `border-width` values actually match an Excel border style. See [Border CSS Mapping](#border-css-mapping) for details.|:heavy_check_mark:
-[border-style](https://developer.mozilla.org/en-US/docs/Web/CSS/border-style)|`border-style` shorthand property. <br/>Supported values: <u>`none`</u>, `solid`, `dashed`, `dotted`, `double`, *`hairline`*, *`dot-dash`*, *`dot-dot-dash`*, *`dot-dash-slanted`*.|:heavy_check_mark:
-[border-width](https://developer.mozilla.org/en-US/docs/Web/CSS/border-width)|`border-width` shorthand property. <br/>Supported values: `thin`, <u>`medium`</u>, `thick`.|:heavy_check_mark:
+[border-style](https://developer.mozilla.org/en-US/docs/Web/CSS/border-style)|`border-style` shorthand property. <br/>Supported values: <ins>`none`</ins>, `solid`, `dashed`, `dotted`, `double`, *`hairline`*, *`dot-dash`*, *`dot-dot-dash`*, *`dot-dash-slanted`*.|:heavy_check_mark:
+[border-width](https://developer.mozilla.org/en-US/docs/Web/CSS/border-width)|`border-width` shorthand property. <br/>Supported values: `thin`, <ins>`medium`</ins>, `thick`.|:heavy_check_mark:
 [border-color](https://developer.mozilla.org/en-US/docs/Web/CSS/border-color)|`border-color` shorthand property. <br/>Supported values: see [Color specification](#color-specification).|:heavy_check_mark:
 [border-left](https://developer.mozilla.org/en-US/docs/Web/CSS/border-left)|`border-left` shorthand property.|:heavy_check_mark:
 [border-right](https://developer.mozilla.org/en-US/docs/Web/CSS/border-right)|`border-right` shorthand property.|:heavy_check_mark:
@@ -1281,18 +1281,18 @@ Name|Description  |Standard
 [font](https://developer.mozilla.org/en-US/docs/Web/CSS/font)|`font` shorthand property. <br/>ExcelGen only supports `font-family`, `font-size`, `font-style` and `font-weight` components.|:heavy_check_mark:
 [font-family](https://developer.mozilla.org/en-US/docs/Web/CSS/font-family)|Font family name.|:heavy_check_mark:
 [font-size](https://developer.mozilla.org/en-US/docs/Web/CSS/font-size)|Font size. <br/>ExcelGen only supports value in point unit, e.g. `11pt`.|:heavy_check_mark:
-[font-style](https://developer.mozilla.org/en-US/docs/Web/CSS/font-style)|Font style. <br/>Supported values: <u>`normal`</u>, `italic`.|:heavy_check_mark:
-[font-weight](https://developer.mozilla.org/en-US/docs/Web/CSS/font-weight)|Font weight. <br/>Supported values: <u>`normal`</u>, `bold`.|:heavy_check_mark:
+[font-style](https://developer.mozilla.org/en-US/docs/Web/CSS/font-style)|Font style. <br/>Supported values: <ins>`normal`</ins>, `italic`.|:heavy_check_mark:
+[font-weight](https://developer.mozilla.org/en-US/docs/Web/CSS/font-weight)|Font weight. <br/>Supported values: <ins>`normal`</ins>, `bold`.|:heavy_check_mark:
 [text-decoration](https://developer.mozilla.org/en-US/docs/Web/CSS/text-decoration)|`text-decoration` shorthand property.  <br/>ExcelGen only supports `text-decoration-line` and `text-decoration-style` components.|:heavy_check_mark:
-[text-decoration-line](https://developer.mozilla.org/en-US/docs/Web/CSS/text-decoration-line)|Kind of text decoration. <br/>Supported values: <u>`none`</u>, `underline`.|:heavy_check_mark:
-[text-decoration-style](https://developer.mozilla.org/en-US/docs/Web/CSS/text-decoration-style)|Style of the text decoration line. <br>Supported values: <u>`solid`</u>, `double`, *`single-accounting`*, *`double-accounting`*.|:heavy_check_mark:
+[text-decoration-line](https://developer.mozilla.org/en-US/docs/Web/CSS/text-decoration-line)|Kind of text decoration. <br/>Supported values: <ins>`none`</ins>, `underline`.|:heavy_check_mark:
+[text-decoration-style](https://developer.mozilla.org/en-US/docs/Web/CSS/text-decoration-style)|Style of the text decoration line. <br>Supported values: <ins>`solid`</ins>, `double`, *`single-accounting`*, *`double-accounting`*.|:heavy_check_mark:
 [vertical-align](https://developer.mozilla.org/en-US/docs/Web/CSS/vertical-align)|`vertical-align` property. <br/>Supported values: `top`, `middle`, `bottom`, *`justify`*, *`distributed`*.|:heavy_check_mark:
 [text-align](https://developer.mozilla.org/en-US/docs/Web/CSS/text-align)|`text-align` property. <br/>Supported values: `left`, `center`, `right`, `justify`, *`fill`*, *`center-across`*, *`distributed`*.|:heavy_check_mark:
-[white-space](https://developer.mozilla.org/en-US/docs/Web/CSS/white-space)|`white-space` property. <br/>Supported values: <u>`pre`</u>, `pre-wrap`. <br/>Default value is `pre`, which maps to the default "no wrap" mode for a cell.|:heavy_check_mark:
+[white-space](https://developer.mozilla.org/en-US/docs/Web/CSS/white-space)|`white-space` property. <br/>Supported values: <ins>`pre`</ins>, `pre-wrap`. <br/>Default value is `pre`, which maps to the default "no wrap" mode for a cell.|:heavy_check_mark:
 [color](https://developer.mozilla.org/en-US/docs/Web/CSS/color)|`color` property, sets the text and text decoration color. <br/>Supported values: see [Color specification](#color-specification).|:heavy_check_mark:
 [background](https://developer.mozilla.org/en-US/docs/Web/CSS/background)|`background` shorthand property. <br/>ExcelGen only supports `background-color` component, so this property is equivalent to the `background-color` property (see below).|:heavy_check_mark:
 [background-color](https://developer.mozilla.org/en-US/docs/Web/CSS/background-color)|`background-color` property, sets the background color of the cell. <br/>When the pattern type is set to `none` (the default), specifying a color via this property defines a solid fill. <br/>Supported values: see [Color specification](#color-specification).|:heavy_check_mark:
-mso-pattern|Fill pattern type. <br/>Supported values: <u>*`none`*</u>, *`gray-50`*, *`gray-75`*, *`gray-25`*, *`horz-stripe`*, *`vert-stripe`*, *`reverse-dark-down`*, *`diag-stripe`*, *`diag-cross`*, *`thick-diag-cross`*, *`thin-horz-stripe`*, *`thin-vert-stripe`*, *`thin-reverse-diag-stripe`*, *`thin-diag-stripe`*, *`thin-horz-cross`*, *`thin-diag-cross`*, *`gray-125`*, *`gray-0625`*. <br/><br/>See [Pattern CSS Mapping](#pattern-css-mapping) for details.|:x:
+mso-pattern|Fill pattern type. <br/>Supported values: <ins>*`none`*</ins>, *`gray-50`*, *`gray-75`*, *`gray-25`*, *`horz-stripe`*, *`vert-stripe`*, *`reverse-dark-down`*, *`diag-stripe`*, *`diag-cross`*, *`thick-diag-cross`*, *`thin-horz-stripe`*, *`thin-vert-stripe`*, *`thin-reverse-diag-stripe`*, *`thin-diag-stripe`*, *`thin-horz-cross`*, *`thin-diag-cross`*, *`gray-125`*, *`gray-0625`*. <br/><br/>See [Pattern CSS Mapping](#pattern-css-mapping) for details.|:x:
 mso-number-format|Number/Date format string. <br/>e.g. `"0.00"`, `"yyyy-mm-dd"`|:x:
 
 
