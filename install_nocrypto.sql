@@ -1,6 +1,7 @@
 -- avoids compiling procedures that require dbms_crypto. Use this install script if dbms_crypto was
 -- not granted to your schema
 --
+set define off
 alter session set plsql_optimize_level=3;
 
 prompt Creating package XUTL_CDF ...

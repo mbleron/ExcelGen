@@ -1,3 +1,4 @@
+set define off
 alter session set plsql_optimize_level=3;
 
 prompt Creating package XUTL_CDF ...
