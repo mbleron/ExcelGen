@@ -608,13 +608,13 @@ create or replace package body ExcelGen is
   end;
 
   function makeCellRef (
-    colIdx  in pls_integer
-  , rowIdx  in pls_integer
+    p_colIdx  in pls_integer
+  , p_rowIdx  in pls_integer
   )
   return varchar2
   is
   begin
-    return makeCellRef(base26encode(colIdx), rowIdx).value;
+    return makeCellRef(base26encode(p_colIdx), p_rowIdx).value;
   end;
 
   function translateCellRef (

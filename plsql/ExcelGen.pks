@@ -44,6 +44,7 @@ create or replace package ExcelGen is
     Marc Bleron       2022-09-04     Added row properties
                                      Added multitable sheet model and cell API
                                      Refactoring
+    Marc Bleron       2022-11-18     Renamed makeCellRef parameters
 ====================================================================================== */
 
   -- file types
@@ -150,8 +151,8 @@ create or replace package ExcelGen is
   return cellStyleHandle;
 
   function makeCellRef (
-    colIdx  in pls_integer
-  , rowIdx  in pls_integer
+    p_colIdx  in pls_integer
+  , p_rowIdx  in pls_integer
   )
   return varchar2;
 

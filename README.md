@@ -287,14 +287,14 @@ Parameter|Description|Mandatory
 `p_anchorTableId`|Handle of the anchor table.|No
 `p_anchorPosition`|Position in the anchor table from which row and column offsets are applied. <br>One of `TOP_LEFT`, `TOP_RIGHT`, `BOTTOM_RIGHT`, `BOTTOM_LEFT`.|No
 
-Three convenience procedures are also provided to directly put a numeric, string or date value: [putNumberCell](#putnumbercell-function), [putStringCell](#putstringcell-function) and [putDateCell](#putdatecell-function).
+Three convenience procedures are also provided to directly put a numeric, string or date value: [putNumberCell](#putnumbercell-procedure), [putStringCell](#putstringcell-procedure) and [putDateCell](#putdatecell-procedure).
 
 ---
 ### putNumberCell procedure  
 Sets a numeric value in a given cell.
-See [putCell](#putcell-function) function for a description of common parameters.
+See [putCell](#putcell-procedure) procedure for a description of common parameters.
 ```sql
-procedure putCell (
+procedure putNumberCell (
   p_ctxId           in ctxHandle
 , p_sheetId         in sheetHandle
 , p_rowIdx          in pls_integer
@@ -309,9 +309,9 @@ procedure putCell (
 ---
 ### putStringCell procedure  
 Sets a string value in a given cell.
-See [putCell](#putcell-function) function for a description of common parameters.
+See [putCell](#putcell-procedure) procedure for a description of common parameters.
 ```sql
-procedure putCell (
+procedure putStringCell (
   p_ctxId           in ctxHandle
 , p_sheetId         in sheetHandle
 , p_rowIdx          in pls_integer
@@ -326,9 +326,9 @@ procedure putCell (
 ---
 ### putDateCell procedure  
 Sets a date value in a given cell.
-See [putCell](#putcell-function) function for a description of common parameters.
+See [putCell](#putcell-procedure) procedure for a description of common parameters.
 ```sql
-procedure putCell (
+procedure putDateCell (
   p_ctxId           in ctxHandle
 , p_sheetId         in sheetHandle
 , p_rowIdx          in pls_integer
@@ -1697,6 +1697,10 @@ Shows available cell styling options.
 [style-showcase.sql](./test_cases/style-showcase.sql) &#8594; [style-showcase.xlsx](./samples/style-showcase.xlsx)
 
 ## CHANGELOG
+
+### 3.0.1 (2022-11-18)
+
+* Fix : issue #33
 
 ### 3.0 (2022-11-02)
 
