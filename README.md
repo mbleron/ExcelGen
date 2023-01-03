@@ -999,7 +999,7 @@ Parameter|Description|Mandatory
     p_ctxId   => ctx
   , p_sheetId => sheet1
   , p_range   => 'B2:C3'
-  , p_range   => ExcelGen.makeCellStyleCss(ctx, 'background:yellow;border:medium solid red')
+  , p_style   => ExcelGen.makeCellStyleCss(ctx, 'background:yellow;border:medium solid red')
   );
 ```
 ![range-style-1](./resources/range-style-1.png)
@@ -1010,7 +1010,7 @@ With outside borders only:
     p_ctxId          => ctx
   , p_sheetId        => sheet1
   , p_range          => 'B2:C3'
-  , p_range          => ExcelGen.makeCellStyleCss(ctx, 'background:yellow;border:medium solid red')
+  , p_style          => ExcelGen.makeCellStyleCss(ctx, 'background:yellow;border:medium solid red')
   , p_outsideBorders => true
   );
 ```
