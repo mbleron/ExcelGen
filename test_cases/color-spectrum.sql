@@ -5,7 +5,7 @@ declare
   rowIdx  pls_integer := 0;
   colIdx  pls_integer := 0;
   
-  function hsl2rgb2 (H in number, SL in number, L in number)
+  function hsl2rgb (H in number, SL in number, L in number)
   return varchar2
   is
     a  number := SL * least(L, 1 - L);
@@ -29,7 +29,7 @@ begin
     colIdx := 0;
     for v in 0 .. 359 loop
       colIdx := colIdx + 1;
-      ExcelGen.putCell(ctx, sheet1, rowIdx, colIdx, null, p_style => ExcelGen.makeCellStyle(ctx, p_fill => ExcelGen.makePatternFill('solid',hsl2rgb2(v, 1, lt/100))));
+      ExcelGen.putCell(ctx, sheet1, rowIdx, colIdx, null, p_style => ExcelGen.makeCellStyle(ctx, p_fill => ExcelGen.makePatternFill('solid',hsl2rgb(v, 1, lt/100))));
     end loop;
   end loop;
   

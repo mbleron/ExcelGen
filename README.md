@@ -110,6 +110,7 @@ For simple requirements such as a single-table sheet, shortcut procedures and fu
   * [setTableHeader](#settableheader-procedure)
   * [setTableProperties](#settableproperties-procedure)
   * [setTableColumnProperties](#settablecolumnproperties-procedure)
+  * [setTableColumnFormat](#settablecolumnformat-procedure)
   * [setTableRowProperties](#settablerowproperties-procedure)
 * Cell management
   * [putCell](#putcell-procedure)
@@ -127,9 +128,14 @@ For simple requirements such as a single-table sheet, shortcut procedures and fu
   * [makeBorder](#makeborder-function)  
   * [makeFont](#makefont-function)  
   * [makePatternFill](#makepatternfill-function)  
+  * [makeGradientFill](#makegradientfill-function)  
+  * [makeGradientStop](#makegradientstop-function)  
+  * [addGradientStop](#addgradientstop-procedure)  
   * [makeAlignment](#makealignment-function)  
   * [makeCellStyle](#makecellstyle-function)  
   * [makeCellStyleCss](#makecellstylecss-function)  
+  * [setDefaultStyle](#setdefaultstyle-procedure)  
+  * [setRangeStyle](#setrangestyle-procedure)  
 ---
 
 ### createContext function
@@ -583,9 +589,10 @@ procedure setSheetProperties (
   p_ctxId                in ctxHandle
 , p_sheetId              in sheetHandle
 , p_activePaneAnchorRef  in varchar2 default null
-, p_showGridLines        in boolean default true
-, p_showRowColHeaders    in boolean default true
+, p_showGridLines        in boolean default null
+, p_showRowColHeaders    in boolean default null
 , p_defaultRowHeight     in number default null
+, p_defaultStyle         in cellStyleHandle default null
 );
 ```
 
@@ -597,6 +604,7 @@ Parameter|Description|Mandatory
 `p_showGridLines`|Hide or show grid lines on the sheet. Default is `true` (show).|No
 `p_showRowColHeaders`|Hide or show row and column headers on the sheet. Default is `true` (show).|No
 `p_defaultRowHeight`|Default row height on this sheet, in points.|No
+`p_defaultStyle`|Default sheet-level cell style. <br/>Cell styles declared at lower levels (column, row, cell) will inherit from this style.|No
 
 ---
 ### setTableProperties procedure
@@ -673,6 +681,28 @@ Parameter|Description|Mandatory
 `p_columnId`|Column index.|Yes
 `p_columnName`|Column name.|No
 `p_style`|Cell style handle created via [makeCellStyle](#makecellstyle-function) or [makeCellStyleCss](#makecellstylecss-function) function.|No
+
+---
+### setTableColumnFormat procedure
+This procedure sets table-level column number/date format.  
+
+```sql
+procedure setTableColumnFormat (
+  p_ctxId     in ctxHandle
+, p_sheetId   in sheetHandle
+, p_tableId   in pls_integer
+, p_columnId  in pls_integer
+, p_format    in varchar2
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
+`p_tableId`|Table handle.|Yes
+`p_columnId`|Column index.|Yes
+`p_format`|Format string. <br/>It takes precedence over existing settings for NUMBER, DATE or TIMESTAMP data types at workbook, sheet and sheet column level. <br/>The format must follow MS Excel proprietary [syntax](https://support.microsoft.com/en-us/office/create-a-custom-number-format-78f2a361-936b-4c03-8772-09fab54be7f4).  |Yes
 
 ---
 ### setTableRowProperties procedure
@@ -854,15 +884,43 @@ Parameter|Description|Mandatory
 `p_width`|Cf. [setColumnProperties](#setcolumnproperties-procedure).|No
 
 ---
+### setDefaultStyle procedure
+This procedure sets the default cell style at workbook or sheet level.  
+See [Style inheritance](#style-inheritance) for more information about style propagation at lower levels.  
+
+```sql
+procedure setDefaultStyle (
+  p_ctxId    in ctxHandle
+, p_style    in cellStyleHandle
+);
+```
+```sql
+procedure setDefaultStyle (
+  p_ctxId    in ctxHandle
+, p_sheetId  in sheetHandle
+, p_style    in cellStyleHandle
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
+`p_style`|Handle to a cell style created via [makeCellStyle](#makecellstyle-function) or [makeCellStyleCss](#makecellstylecss-function) function.|Yes
+
+---
 ### mergeCells procedure
 This procedure declares a range of cells to be merged in the resulting sheet.  
-The range may be defined by a string expression (overload 1), or by its position and span across rows and columns (overload 2). The latter allows relative positioning from a previously defined table object.
+The range may be defined by a string expression (overload 1), or by its position and span across rows and columns (overload 2). The latter allows relative positioning from a previously defined table object.  
+  
+In Excel, the style of the resulting cell is that of the top-left cell of the range, except for borders which are usually not rendered correctly. That's why an optional `p_style` parameter is provided to apply a given style to the range, as if an additional call to [setRangeStyle](#setrangestyle-procedure) were made with `p_outsideBorders` forced to `true`.  
 
 ```sql
 procedure mergeCells (
   p_ctxId    in ctxHandle
 , p_sheetId  in sheetHandle
 , p_range    in varchar2
+, p_style    in cellStyleHandle default null
 );
 ```
 ```sql
@@ -875,6 +933,7 @@ procedure mergeCells (
 , p_colSpan         in pls_integer
 , p_anchorTableId   in tableHandle default null
 , p_anchorPosition  in pls_integer default null
+, p_style           in cellStyleHandle default null
 );
 ```
 
@@ -889,6 +948,73 @@ Parameter|Description|Mandatory
 `p_colSpan`|Number of columns this range spans.|Yes
 `p_anchorTableId`|Handle of the anchor table.|No
 `p_anchorPosition`|Position in the anchor table from which row and column offsets are applied. <br>One of `TOP_LEFT`, `TOP_RIGHT`, `BOTTOM_RIGHT`, `BOTTOM_LEFT`.|No
+`p_style`|Handle to a cell style created via [makeCellStyle](#makecellstyle-function) or [makeCellStyleCss](#makecellstylecss-function) function.|No
+
+---
+### setRangeStyle procedure
+This procedure sets the style applied to a given range of cells.  
+Just like [mergeCells](#mergecells-procedure) procedure, the range may be defined by a string expression (overload 1), or by its position and span across rows and columns (overload 2). The latter allows relative positioning from a previously defined table object.  
+
+```sql
+procedure setRangeStyle (
+  p_ctxId           in ctxHandle
+, p_sheetId         in sheetHandle
+, p_range           in varchar2
+, p_style           in cellStyleHandle
+, p_outsideBorders  in boolean default false
+);
+```
+```sql
+procedure setRangeStyle (
+  p_ctxId           in ctxHandle
+, p_sheetId         in sheetHandle
+, p_rowOffset       in pls_integer
+, p_colOffset       in pls_integer
+, p_rowSpan         in pls_integer
+, p_colSpan         in pls_integer
+, p_anchorTableId   in tableHandle default null
+, p_anchorPosition  in pls_integer default null
+, p_style           in cellStyleHandle
+, p_outsideBorders  in boolean default false
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
+`p_range`|Range of cells. <br/>For example: `'C2:E5'`.|Yes
+`p_rowOffset`|1-based row index of the top-left cell of the range, if `p_anchorTableId` is NULL. Otherwise represents a 0-based row offset from the table anchor position.|Yes
+`p_colOffset`|1-based column index of the top-left cell of the range, if `p_anchorTableId` is NULL. Otherwise represents a 0-based column offset from the table anchor position.|Yes
+`p_rowSpan`|Number of rows this range spans.|Yes
+`p_colSpan`|Number of columns this range spans.|Yes
+`p_anchorTableId`|Handle of the anchor table.|No
+`p_anchorPosition`|Position in the anchor table from which row and column offsets are applied. <br>One of `TOP_LEFT`, `TOP_RIGHT`, `BOTTOM_RIGHT`, `BOTTOM_LEFT`.|No
+`p_style`|Handle to a cell style created via [makeCellStyle](#makecellstyle-function) or [makeCellStyleCss](#makecellstylecss-function) function.|Yes
+`p_outsideBorders`|Whether to apply this style's border component to the outside of the range only. Default is `false`. <br/>See example below.|No
+
+#### Example
+```sql
+  ExcelGen.setRangeStyle(
+    p_ctxId   => ctx
+  , p_sheetId => sheet1
+  , p_range   => 'B2:C3'
+  , p_range   => ExcelGen.makeCellStyleCss(ctx, 'background:yellow;border:medium solid red')
+  );
+```
+![range-style-1](./resources/range-style-1.png)
+
+With outside borders only: 
+```sql
+  ExcelGen.setRangeStyle(
+    p_ctxId          => ctx
+  , p_sheetId        => sheet1
+  , p_range          => 'B2:C3'
+  , p_range          => ExcelGen.makeCellStyleCss(ctx, 'background:yellow;border:medium solid red')
+  , p_outsideBorders => true
+  );
+```
+![range-style-2](./resources/range-style-2.png)
 
 ---
 ### makeCellRef function
@@ -1091,6 +1217,58 @@ Note :
 For a solid fill (no pattern), the color must be specified using the foreground color parameter.  
 
 ---
+### makeGradientFill function
+This function builds an instance of a cell linear gradient fill.
+
+```sql
+function makeGradientFill (
+  p_degree  in number default null
+, p_stops   in CT_GradientStopList default null
+)
+return CT_Fill;
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_degree`|Angle of the linear gradient in degree. <br/>Default is 0, which represents a left-to-right gradient. Increasing the angle rotates the gradient line clockwise. <br/>NB: Excel presumably calculates the gradient in a square box before scaling it to the cell dimensions. So, for example, a gradient rotated 45° right will have its midpoint matching the diagonal of the cell, regardless of its dimensions:  <br/>![gradient-45](./resources/gradient-45.png)|No
+`p_stops`|List of color-stop points as a collection of `CT_GradientStop` instances. <br/>If the list is NULL, color-stops may be added later via [addGradientStop](#addgradientstop-procedure) procedure.|No
+
+---
+### makeGradientStop function
+This function builds an instance of a color-stop point to be used in a linear gradient fill definition.
+
+```sql
+function makeGradientStop (
+  p_position  in number
+, p_color     in varchar2
+)
+return CT_GradientStop;
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_position`|Position of this color-stop point on the gradient line. <br/>It must be a number between 0 and 1, where 0 represents the starting point and 1 the ending point of the line.|Yes
+`p_color`|[Color](#color-specification) of this stop point.|Yes
+
+---
+### addGradientStop procedure
+This procedure adds a new color-stop point to an existing linear gradient fill.
+
+```sql
+procedure addGradientStop (
+  p_fill      in out nocopy CT_Fill
+, p_position  in number
+, p_color     in varchar2
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_fill`|Gradient fill instance.|Yes
+`p_position`|Cf. [makeGradientStop](#makegradientstop-function).|Yes
+`p_color`|Cf. [makeGradientStop](#makegradientstop-function).|Yes
+
+---
 ### makeAlignment function
 This function builds an instance of a cell alignment.
 
@@ -1290,8 +1468,9 @@ Name|Description  |Standard
 [text-align](https://developer.mozilla.org/en-US/docs/Web/CSS/text-align)|`text-align` property. <br/>Supported values: `left`, `center`, `right`, `justify`, *`fill`*, *`center-across`*, *`distributed`*.|:heavy_check_mark:
 [white-space](https://developer.mozilla.org/en-US/docs/Web/CSS/white-space)|`white-space` property. <br/>Supported values: <ins>`pre`</ins>, `pre-wrap`. <br/>Default value is `pre`, which maps to the default "no wrap" mode for a cell.|:heavy_check_mark:
 [color](https://developer.mozilla.org/en-US/docs/Web/CSS/color)|`color` property, sets the text and text decoration color. <br/>Supported values: see [Color specification](#color-specification).|:heavy_check_mark:
-[background](https://developer.mozilla.org/en-US/docs/Web/CSS/background)|`background` shorthand property. <br/>ExcelGen only supports `background-color` component, so this property is equivalent to the `background-color` property (see below).|:heavy_check_mark:
+[background](https://developer.mozilla.org/en-US/docs/Web/CSS/background)|`background` shorthand property. <br/>ExcelGen only supports a single `background-color` or `background-image` component (see below).|:heavy_check_mark:
 [background-color](https://developer.mozilla.org/en-US/docs/Web/CSS/background-color)|`background-color` property, sets the background color of the cell. <br/>When the pattern type is set to `none` (the default), specifying a color via this property defines a solid fill. <br/>Supported values: see [Color specification](#color-specification).|:heavy_check_mark:
+[background-image](https://developer.mozilla.org/en-US/docs/Web/CSS/background-image)|`background-image` property. <br/>ExcelGen only supports a single gradient value specified via [linear-gradient()](https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient) function.|:heavy_check_mark:
 mso-pattern|Fill pattern type. <br/>Supported values: <ins>*`none`*</ins>, *`gray-50`*, *`gray-75`*, *`gray-25`*, *`horz-stripe`*, *`vert-stripe`*, *`reverse-dark-down`*, *`diag-stripe`*, *`diag-cross`*, *`thick-diag-cross`*, *`thin-horz-stripe`*, *`thin-vert-stripe`*, *`thin-reverse-diag-stripe`*, *`thin-diag-stripe`*, *`thin-horz-cross`*, *`thin-diag-cross`*, *`gray-125`*, *`gray-0625`*. <br/><br/>See [Pattern CSS Mapping](#pattern-css-mapping) for details.|:x:
 mso-number-format|Number/Date format string. <br/>e.g. `"0.00"`, `"yyyy-mm-dd"`|:x:
 
@@ -1320,6 +1499,64 @@ For example, the following code snippet
 will generate:  
 ![Shades of red](./resources/shades-of-red.png)
 
+
+### Gradient
+ExcelGen supports a linear gradient cell background specified via the built-in API [makeGradientFill](#makegradientfill-function), or CSS `background`/`background-image` properties.  
+Internally, an Excel gradient fill is composed of a sequence of color stops, and an angle of rotation for the gradient line. Each stop is defined by its position along the gradient line, from 0 to 1 inclusive, and a color. Between two adjacent stops, the color is determined by linear interpolation, the 50% color mix being half-way.  
+
+ExcelGen implements the [linear-gradient()](https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient) CSS function with the following differences from the standard : 
+* **Transition hint**:  
+When linear-gradient defines a color [transition hint](https://drafts.csswg.org/css-images-4/#coloring-gradient-line), the transition to and from the 50% mix is not linear but exponential. Since Excel does not support that natively,  ExcelGen uses a linear transition instead.  
+* **Gradient angle**:  
+*First, please bear in mind that Excel and CSS have different conventions regarding angle zero. In Excel, it corresponds to a left-to-right orientation while CSS defines its zero as a bottom-to-top orientation. And to confuse things a bit more, the optional angle parameter in linear-gradient() CSS function does not default to 0deg but corresponds to a top-to-bottom orientation, i.e. 180deg.*
+  CSS Orientation|CSS angle*|Excel angle
+  --|--|--
+  to top|0deg / 0turn|-90
+  to top right|45deg / 0.125turn|-45
+  to right|90deg / 0.25turn|0
+  to bottom right|135deg / 0.375turn|45
+  to bottom|180deg / 0.5turn|90
+  to bottom left|225deg / 0.625turn|135
+  to left|270deg / 0.75turn|180
+  to top left|315deg / 0.875turn|225
+  
+  *(\*) when rendered in a square box*
+
+  Somehow, Excel renders a gradient fill as if the cell were a square box, then scales it to the actual cell dimensions. Therefore, there is a difference in the way the angle is interpreted in Excel vs. CSS.  
+If the gradient orientation is specified as a "side-or-corner" value in CSS, it will be rendered identically in Excel, as per the above table.  
+However, a 45deg CSS angle in an arbitrary rectangular box is not the same as the corresponding Excel angle (-45° in this case): 
+
+  ![css-gradient-45deg](./resources/css-gradient-45deg.png)|![excel-gradient-45deg](./resources/excel-gradient-45deg.png)
+  --|--
+  standard CSS|Excel
+
+* **Color stop positions:**  
+Color stop and transition hint positions outside the range [0% - 100%] are not supported.
+
+#### Examples
+
+```css
+background-image: linear-gradient(to top, #dbdcd7 0%, #dddcd7 24%, #e2c9cc 30%, #e7627d 46%, #b8235a 59%, #801357 71%, #3d1635 84%, #1c1a27 100%)
+```
+![css-gradient-example-1](./resources/css-gradient-example-1.png)  
+&nbsp;  
+
+```css
+background: linear-gradient(89.2deg, rgb(0, 0, 0) 10.4%, rgb(255, 0, 0) 37.1%, rgb(255, 216, 51) 64.3%, rgb(255, 255, 255) 90.5%)
+```
+![css-gradient-example-2](./resources/css-gradient-example-2.png)
+&nbsp;  
+
+```css
+background: 
+    linear-gradient(109.6deg, 
+        rgb(33, 25, 180) 11.2%, 
+        rgb(253, 29, 29) 55.2%, 
+        rgb(252, 176, 69) 91.1%
+    )
+```
+![css-gradient-example-3](./resources/css-gradient-example-3.png)
+&nbsp;  
 
 ### Predefined table styles  
 
@@ -1400,11 +1637,23 @@ gray0625|gray-0625
 
 ### Style inheritance
 
-When a given style component is not set at cell level, it will automatically inherit its value from the containing row or column, with the following exceptions: 
-* Table header row has its own style independent of sheet-level row settings and will only inherit from **sheet-level** column style.
-* Table cells will inherit from **table-level** row style, in addition to table-level or sheet-level column style.
+Cell styles may be defined at different levels according to the below diagram.  
+When a given style component is not set at a specific level, it will automatically inherit its value from the containing element, in cascade.  
+![style-inheritance-diagram](./resources/style-inheritance-diagram.png)
 
-In any case, column-level settings will take precedence over row-level's.
+**Caveats:**  
+* A style component defined at workbook or sheet level is "virtual", i.e. it will only apply when a lower-level and explicitly defined style inherits from it.  
+For example, setting a cell background at sheet level does not automatically set that background to all cells of the sheet,  but only to those cells whose styles inherit from the sheet-level style, either directly or through its containing (table) row or (table) column.  
+* Column-level settings, even inherited, take precedence over row-level's.
+For instance, the following piece of code sets the horizontal alignment for column #2, the background color for row #2, and a default background color at sheet level:  
+  ```sql
+  ExcelGen.setColumnProperties(ctx, sheet1, 2, ExcelGen.makeCellStyleCss(ctx, 'text-align:center'));
+  ExcelGen.setRowProperties(ctx, sheet1, 2, ExcelGen.makeCellStyleCss(ctx, 'background-color:lightgreen'));
+  ExcelGen.setDefaultStyle(ctx, sheet1, ExcelGen.makeCellStyleCss(ctx, 'background-color:violet'));
+  ExcelGen.putStringCell(ctx, sheet1, 2, 2, 'X');
+  ```
+  Since the style declared for column #2 does not set the background color component, it inherits the sheet-level value, and since column-level value takes precedence, cell at B2 will have a violet background:  
+![style-inheritance](./resources/style-inheritance.png)
 
 ## Examples
 
@@ -1692,11 +1941,24 @@ Handling of an ANYDATA source column.
 Creates a rainbow-like matrix made of 36,360 cells of different colors.  
 [color-spectrum.sql](./test_cases/color-spectrum.sql) &#8594; [![color-spectrum-thumb](./resources/color-spectrum-thumb.png)](./samples/color-spectrum.xlsx)
 
+#### Weave pattern demo  
+Creates a weave pattern using cell background color and gradient pattern.  
+[weave-pattern.sql](./test_cases/weave-pattern.sql) &#8594; [![weave-pattern-thumb](./resources/weave-pattern-thumb.png)](./samples/weave-pattern.xlsx)
+
 #### Style showcase
 Shows available cell styling options.  
 [style-showcase.sql](./test_cases/style-showcase.sql) &#8594; [style-showcase.xlsx](./samples/style-showcase.xlsx)
 
 ## CHANGELOG
+
+### 3.1 (2023-01-03)
+
+* Added Range style
+* Added Gradient fill
+* Enhancement : issue #32
+* Enhancement : issue #37
+* Fix : issue #35
+* Fix : issue #39
 
 ### 3.0.1 (2022-11-18)
 
@@ -1769,4 +2031,4 @@ Shows available cell styling options.
 
 ## Copyright and license
 
-Copyright 2020-2022 Marc Bleron. Released under MIT license.
+Copyright 2020-2023 Marc Bleron. Released under MIT license.

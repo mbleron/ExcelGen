@@ -1,4 +1,4 @@
--- STYLE-SPECS
+-- STYLE-SHOWCASE
 declare
 
   ctx  ExcelGen.ctxHandle;
@@ -325,6 +325,26 @@ declare
     putTable('Dark', 92, 4, 11);
 
   end;
+  
+  procedure makeGradientSheet is
+    sheet6  ExcelGen.sheetHandle := ExcelGen.addSheet(ctx, 'Gradients');
+  begin
+    ExcelGen.putCell(ctx, sheet6, 1, 1, p_style => ExcelGen.makeCellStyleCss(ctx, 'background-image: linear-gradient(to top, #dbdcd7 0%, #dddcd7 24%, #e2c9cc 30%, #e7627d 46%, #b8235a 59%, #801357 71%, #3d1635 84%, #1c1a27 100%);'));
+    ExcelGen.putCell(ctx, sheet6, 2, 1, p_style => ExcelGen.makeCellStyleCss(ctx, 'background-image: linear-gradient(to top, #3f51b1 0%, #5a55ae 13%, #7b5fac 25%, #8f6aae 38%, #a86aa4 50%, #cc6b8e 62%, #f18271 75%, #f3a469 87%, #f7c978 100%);'));
+    ExcelGen.putCell(ctx, sheet6, 3, 1, p_style => ExcelGen.makeCellStyleCss(ctx, 'background: linear-gradient(89.2deg, rgb(0, 0, 0) 10.4%, rgb(255, 0, 0) 37.1%, rgb(255, 216, 51) 64.3%, rgb(255, 255, 255) 90.5%);'));
+    ExcelGen.putCell(ctx, sheet6, 4, 1, p_style => ExcelGen.makeCellStyleCss(ctx, 'background: linear-gradient(110.7deg, rgb(255, 81, 47) 1.7%, rgb(255, 167, 47) 8.2%, rgb(218, 253, 1) 16.2%, rgb(98, 234, 20) 23.4%, rgb(69, 193, 42) 32.8%, rgb(7, 249, 149) 43.7%, rgb(6, 200, 217) 55.3%, rgb(18, 51, 233) 65.5%, rgb(122, 59, 202) 74.5%, rgb(231, 7, 249) 82.3%, rgb(202, 59, 163) 91.4%);'));
+    ExcelGen.putCell(ctx, sheet6, 5, 1, p_style => ExcelGen.makeCellStyleCss(ctx, 'background: linear-gradient(-20deg, #d558c8 0%, #24d292 100%);'));
+    ExcelGen.putCell(ctx, sheet6, 6, 1, p_style => ExcelGen.makeCellStyleCss(ctx, 'background: linear-gradient(102.2deg, rgb(109, 118, 150) 7.1%, rgb(89, 72, 79) 14.7%, rgb(69, 92, 79) 28%, rgb(204, 85, 67) 43.4%, rgb(237, 181, 121) 60.2%, rgb(219, 230, 175) 76.8%);'));
+    ExcelGen.putCell(ctx, sheet6, 7, 1, p_style => ExcelGen.makeCellStyleCss(ctx, 'background: linear-gradient(to top, #0fd850 0%, #f9f047 100%);'));
+    ExcelGen.putCell(ctx, sheet6, 8, 1, p_style => ExcelGen.makeCellStyleCss(ctx, 'background: linear-gradient(105.9deg, rgb(15, 209, 165) 3.8%, rgb(15, 157, 209) 20.8%, rgb(133, 13, 230) 51.9%, rgb(230, 13, 202) 73.1%, rgb(242, 180, 107) 94.1%);'));
+    ExcelGen.putCell(ctx, sheet6, 9, 1, p_style => ExcelGen.makeCellStyleCss(ctx, 'background: linear-gradient( 109.6deg, rgb(33, 25, 180) 11.2%, rgb(253, 29, 29) 55.2%, rgb(252, 176, 69) 91.1%);'));
+    ExcelGen.putCell(ctx, sheet6, 10, 1, p_style => ExcelGen.makeCellStyleCss(ctx, 'background: linear-gradient(99.6deg, rgb(112, 128, 152) 10.6%, rgb(242, 227, 234) 32.9%, rgb(234, 202, 213) 52.7%, rgb(220, 227, 239) 72.8%, rgb(185, 205, 227) 81.1%, rgb(154, 180, 212) 100%);'));
+    
+    ExcelGen.setColumnProperties(ctx, sheet6, 1, p_width => 50);
+    for i in 1 .. 10 loop
+      ExcelGen.setRowProperties(ctx, sheet6, i, p_height => 195);
+    end loop;    
+  end;
 
 begin
 
@@ -335,8 +355,9 @@ begin
   makeTableSheet;
   makeAlignmentSheet;
   makeColorSheet;
+  makeGradientSheet;
 
-  ExcelGen.createFile(ctx, 'TEST_DIR', 'style-specs.xlsx');
+  ExcelGen.createFile(ctx, 'TEST_DIR', 'style-showcase.xlsx');
   ExcelGen.closeContext(ctx);
 
 end;

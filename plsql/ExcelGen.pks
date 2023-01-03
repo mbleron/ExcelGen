@@ -45,6 +45,8 @@ create or replace package ExcelGen is
                                      Added multitable sheet model and cell API
                                      Refactoring
     Marc Bleron       2022-11-18     Renamed makeCellRef parameters
+    Marc Bleron       2022-11-19     Added gradientFill
+    Marc Bleron       2022-11-20     Fixed streamable flag in createWorksheet
 ====================================================================================== */
 
   -- file types
@@ -67,7 +69,9 @@ create or replace package ExcelGen is
   subtype CT_BorderPr is ExcelTypes.CT_BorderPr;
   subtype CT_Border is ExcelTypes.CT_Border;
   subtype CT_Font is ExcelTypes.CT_Font;
-  subtype CT_PatternFill is ExcelTypes.CT_PatternFill;
+  --subtype CT_PatternFill is ExcelTypes.CT_PatternFill;
+  subtype CT_GradientStop is ExcelTypes.CT_GradientStop;
+  subtype CT_GradientStopList is ExcelTypes.CT_GradientStopList;
   subtype CT_Fill is ExcelTypes.CT_Fill;
   subtype CT_CellAlignment is ExcelTypes.CT_CellAlignment;
   
@@ -127,6 +131,24 @@ create or replace package ExcelGen is
   )
   return CT_Fill;
 
+  function makeGradientStop (
+    p_position  in number
+  , p_color     in varchar2
+  )
+  return CT_GradientStop;
+  
+  function makeGradientFill (
+    p_degree  in number default null
+  , p_stops   in CT_GradientStopList default null
+  )
+  return CT_Fill;
+
+  procedure addGradientStop (
+    p_fill      in out nocopy CT_Fill
+  , p_position  in number
+  , p_color     in varchar2
+  );
+
   function makeAlignment (
     p_horizontal  in varchar2 default null
   , p_vertical    in varchar2 default null
@@ -155,6 +177,9 @@ create or replace package ExcelGen is
   , p_rowIdx  in pls_integer
   )
   return varchar2;
+
+  function colPxToCharWidth (p_px in pls_integer) return number;
+  function rowPxToPt (p_px in pls_integer) return number;
 
   function createContext (
     p_type  in pls_integer default FILE_XLSX 
@@ -364,8 +389,8 @@ create or replace package ExcelGen is
     p_ctxId                in ctxHandle
   , p_sheetId              in sheetHandle
   , p_activePaneAnchorRef  in varchar2 default null
-  , p_showGridLines        in boolean default true
-  , p_showRowColHeaders    in boolean default true
+  , p_showGridLines        in boolean default null
+  , p_showRowColHeaders    in boolean default null
   , p_defaultRowHeight     in number default null
   );
 
@@ -373,6 +398,7 @@ create or replace package ExcelGen is
     p_ctxId    in ctxHandle
   , p_sheetId  in sheetHandle
   , p_range    in varchar2
+  , p_style    in cellStyleHandle default null
   );
 
   procedure mergeCells (
@@ -384,6 +410,28 @@ create or replace package ExcelGen is
   , p_colSpan         in pls_integer
   , p_anchorTableId   in tableHandle default null
   , p_anchorPosition  in pls_integer default null
+  , p_style           in cellStyleHandle default null
+  );
+
+  procedure setRangeStyle (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_range           in varchar2
+  , p_style           in cellStyleHandle
+  , p_outsideBorders  in boolean default false
+  );
+
+  procedure setRangeStyle (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowOffset       in pls_integer
+  , p_colOffset       in pls_integer
+  , p_rowSpan         in pls_integer
+  , p_colSpan         in pls_integer
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  , p_style           in cellStyleHandle
+  , p_outsideBorders  in boolean default false
   );
 
   procedure setTableProperties (
@@ -412,6 +460,14 @@ create or replace package ExcelGen is
   , p_columnId    in pls_integer
   , p_columnName  in varchar2 default null
   , p_style       in cellStyleHandle default null
+  );
+
+  procedure setTableColumnFormat (
+    p_ctxId     in ctxHandle
+  , p_sheetId   in sheetHandle
+  , p_tableId   in pls_integer
+  , p_columnId  in pls_integer
+  , p_format    in varchar2
   );
 
   procedure setTableRowProperties (
@@ -509,6 +565,17 @@ create or replace package ExcelGen is
   , p_rowId    in pls_integer
   , p_style    in cellStyleHandle default null
   , p_height   in number default null
+  );
+
+  procedure setDefaultStyle (
+    p_ctxId    in ctxHandle
+  , p_style    in cellStyleHandle
+  );
+
+  procedure setDefaultStyle (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle
+  , p_style    in cellStyleHandle
   );
 
   /*

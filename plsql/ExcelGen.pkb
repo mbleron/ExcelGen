@@ -312,6 +312,7 @@ create or replace package body ExcelGen is
   , v     data_t
   --, st    pls_integer  -- supertype
   , link  link_t
+  , isTableCell  boolean := false
   );
   
   type cellList_t is table of cell_t index by pls_integer;  
@@ -326,6 +327,9 @@ create or replace package body ExcelGen is
   
   type cellSpan_t is record (anchorRef anchorRef_t, rowSpan pls_integer, colSpan pls_integer);
   type cellSpanList_t is table of cellSpan_t;
+  
+  type cellRange_t is record (name varchar2(256), span cellSpan_t, xfId pls_integer, outsideBorders boolean);
+  type cellRangeList_t is table of cellRange_t;
   
   type table_t is record (
     id                 pls_integer
@@ -356,8 +360,9 @@ create or replace package body ExcelGen is
   , sheetIndex           pls_integer
   , tabColor             varchar2(8)
   , defaultFmts          defaultFmts_t
+  , defaultXfId          pls_integer
   , columnMap            colProperties_map_t
-  , rowMap               rowProperties_map_t
+  --, rowMap               rowProperties_map_t
   , hasCustomColProps    boolean
   --, columnLinkMap   link_map_t
   , tableList            tableList_t
@@ -370,8 +375,9 @@ create or replace package body ExcelGen is
   , showGridLines        boolean
   , showRowColHeaders    boolean
   , defaultRowHeight     number
-  , mergedCells          cellSpanList_t --rangeList_t
+  , mergedCells          cellSpanList_t
   , floatingCells        floatingCellList_t
+  , cellRanges           cellRangeList_t
   );
   
   type sheet_definition_map_t is table of sheet_definition_t index by pls_integer;
@@ -393,6 +399,7 @@ create or replace package body ExcelGen is
   , sheetDefinitionMap   sheet_definition_map_t
   , sheetIndexMap        CT_SheetMap
   , defaultFmts          defaultFmts_t
+  , defaultXfId          pls_integer
   , encryptionInfo       encryption_info_t
   , fileType             pls_integer
   );
@@ -439,6 +446,17 @@ create or replace package body ExcelGen is
   is
   begin
     raise_application_error(code, utl_lms.format_message(message, arg1, arg2, arg3));
+  end;
+
+  procedure assertPositive (
+    val      in number
+  , message  in varchar2
+  )
+  is
+  begin
+    if not val > 0 then
+      error(message);
+    end if;
   end;
   
   procedure init
@@ -963,6 +981,36 @@ create or replace package body ExcelGen is
   begin
     return ExcelTypes.makePatternFill(p_patternType, p_fgColor, p_bgColor);
   end;
+
+  function makeGradientStop (
+    p_position  in number
+  , p_color     in varchar2
+  )
+  return CT_GradientStop
+  is
+  begin
+    return ExcelTypes.makeGradientStop(p_position, p_color);
+  end;
+  
+  function makeGradientFill (
+    p_degree  in number default null
+  , p_stops   in CT_GradientStopList default null
+  )
+  return CT_Fill
+  is
+  begin
+    return ExcelTypes.makeGradientFill(p_degree, p_stops);
+  end;
+
+  procedure addGradientStop (
+    p_fill      in out nocopy CT_Fill
+  , p_position  in number
+  , p_color     in varchar2
+  )
+  is
+  begin
+    ExcelTypes.addGradientStop(p_fill, p_position, p_color);
+  end;
   
   function putFill (
     styles  in out nocopy CT_Stylesheet
@@ -1109,6 +1157,16 @@ create or replace package body ExcelGen is
     return xfId;
   end;
 
+  function getCellXf (
+    ctx   in context_t
+  , xfId  in pls_integer
+  )
+  return CT_Xf
+  is
+  begin
+    return ctx.workbook.styles.cellXfs(xfId);
+  end;
+
   procedure putNamedCellStyle (
     styles     in out nocopy CT_Stylesheet
   , name       in varchar2
@@ -1169,7 +1227,7 @@ create or replace package body ExcelGen is
   begin
     if xfId is not null then
       -- get style definition record
-      xf := ctx.workbook.styles.cellXfs(xfId);
+      xf := getCellXf(ctx, xfId);
       -- set format property
       if format is not null and ( xf.numFmtId = 0 or force ) then
         xf.numFmtId := putNumfmt(ctx.workbook.styles, format);
@@ -1183,6 +1241,64 @@ create or replace package body ExcelGen is
     return xfId;
   end;
 
+  procedure mergeCellStyleImpl (
+    ctx         in out nocopy context_t
+  , masterXf    in CT_Xf
+  , xf          in out nocopy CT_Xf
+  )
+  is
+    style        ExcelTypes.CT_Style;
+  begin 
+  
+    if xf.xfId = 0 then
+      xf.xfId := masterXf.xfId;
+    end if;
+      
+    -- number format
+    if xf.numFmtId = 0 then
+      xf.numFmtId := masterXf.numFmtId;
+    end if;
+      
+    -- font
+    if xf.fontId != 0 then
+      style.font := ExcelTypes.mergeFonts( ctx.workbook.styles.fonts(masterXf.fontId)
+                                         , ctx.workbook.styles.fonts(xf.fontId) );
+      xf.fontId := putFont(ctx.workbook.styles, style.font); 
+    else
+      xf.fontId := masterXf.fontId;
+    end if;
+      
+    -- fill
+    if xf.fillId != 0 then
+      style.fill := ctx.workbook.styles.fills(xf.fillId);
+      if style.fill.fillType = ExcelTypes.FT_PATTERN then
+        style.fill := ExcelTypes.mergePatternFills( ctx.workbook.styles.fills(masterXf.fillId)
+                                                  , style.fill );
+        xf.fillId := putFill(ctx.workbook.styles, style.fill);
+      -- else, should be a gradientFill
+      end if;
+    else
+      xf.fillId := masterXf.fillId;
+    end if;
+      
+    -- border
+    if xf.borderId != 0 then
+      style.border := ExcelTypes.mergeBorders( ctx.workbook.styles.borders(masterXf.borderId)
+                                             , ctx.workbook.styles.borders(xf.borderId) );
+      xf.borderId := putBorder(ctx.workbook.styles, style.border);
+    else
+      xf.borderId := masterXf.borderId;
+    end if;
+      
+    -- alignment
+    if xf.alignment.content is not null then
+      xf.alignment := ExcelTypes.mergeAlignments(masterXf.alignment, xf.alignment);
+    else
+      xf.alignment := masterXf.alignment;
+    end if;
+    
+  end;
+
   function mergeCellStyle (
     ctx         in out nocopy context_t
   , masterXfId  in cellStyleHandle
@@ -1190,66 +1306,68 @@ create or replace package body ExcelGen is
   )
   return cellStyleHandle
   is
-    masterXf     CT_Xf;
-    xf           CT_Xf;
-    style        ExcelTypes.CT_Style;
+    xf        CT_Xf;
   begin
-    if xfId != 0 then  
-  
-      masterXf := ctx.workbook.styles.cellXfs(masterXfId);
-      xf := ctx.workbook.styles.cellXfs(xfId);
-
-      if xf.xfId = 0 then
-        xf.xfId := masterXf.xfId;
-      end if;
-      
-      -- number format
-      if xf.numFmtId = 0 then
-        xf.numFmtId := masterXf.numFmtId;
-      end if;
-      
-      -- font
-      if xf.fontId != 0 then
-        style.font := ExcelTypes.mergeFonts( ctx.workbook.styles.fonts(masterXf.fontId)
-                                           , ctx.workbook.styles.fonts(xf.fontId) );
-        xf.fontId := putFont(ctx.workbook.styles, style.font); 
+    if xfId != 0 then
+      if masterXfId != 0 then
+        xf := getCellXf(ctx, xfId);
+        mergeCellStyleImpl(ctx, getCellXf(ctx, masterXfId), xf);
+        setCellXfContent(xf);
+        return putCellXf(ctx.workbook.styles, xf);
       else
-        xf.fontId := masterXf.fontId;
+        return xfId;
       end if;
-      
-      -- fill
-      if xf.fillId != 0 then
-        style.fill := ExcelTypes.mergePatternFills( ctx.workbook.styles.fills(masterXf.fillId)
-                                                  , ctx.workbook.styles.fills(xf.fillId) );        
-        xf.fillId := putFill(ctx.workbook.styles, style.fill);
-      else
-        xf.fillId := masterXf.fillId;
-      end if;
-      
-      -- border
-      if xf.borderId != 0 then
-        style.border := ExcelTypes.mergeBorders( ctx.workbook.styles.borders(masterXf.borderId)
-                                               , ctx.workbook.styles.borders(xf.borderId) );
-        xf.borderId := putBorder(ctx.workbook.styles, style.border);
-      else
-        xf.borderId := masterXf.borderId;
-      end if;
-      
-      -- alignment
-      if xf.alignment.content is not null then
-        xf.alignment := ExcelTypes.mergeAlignments(masterXf.alignment, xf.alignment);
-      else
-        xf.alignment := masterXf.alignment;
-      end if;
-      
-      setCellXfContent(xf);
-      return putCellXf(ctx.workbook.styles, xf);
-    
     else
-      
       return masterXfId;
-      
     end if;
+  end;
+
+  function setRangeBorders (
+    xfId      in pls_integer
+  , cellSpan  in cellSpan_t
+  , rowIdx    in pls_integer
+  , colIdx    in pls_integer
+  )
+  return pls_integer
+  is
+    xf      CT_Xf := getCellXf(currentCtx, xfId);
+    border  CT_Border:= currentCtx.workbook.styles.borders(xf.borderId);
+  begin
+    if xf.borderId != 0 then
+      -- apply outside border
+      border := ExcelTypes.applyBorderSide(
+                  border => border
+                , top    => rowIdx = cellSpan.anchorRef.rowOffset
+                , right  => colIdx = cellSpan.anchorRef.colOffset + cellSpan.colSpan - 1
+                , bottom => rowIdx = cellSpan.anchorRef.rowOffset + cellSpan.rowSpan - 1
+                , left   => colIdx = cellSpan.anchorRef.colOffset
+                );
+      xf.borderId := putBorder(currentCtx.workbook.styles, border);
+      setCellXfContent(xf);
+      return putCellXf(currentCtx.workbook.styles, xf);
+    else
+      return xfId;
+    end if;
+  end;
+
+  function colPxToCharWidth (
+    p_px  in pls_integer
+  )
+  return number
+  is
+  begin
+    return case when p_px < 12 then p_px/12
+                else trunc((p_px - 5)/7 * 100 + .5)/100
+           end;
+  end;
+
+  function rowPxToPt (
+    p_px  in pls_integer
+  )
+  return number
+  is
+  begin
+    return p_px * 3 / 4;
   end;
 
   function getColumnWidth (
@@ -1260,7 +1378,15 @@ create or replace package body ExcelGen is
   begin
     return to_binary_double(
              trunc(
-               round(displayWidth * 7 + 5) -- must be an integer number of pixels
+               round(
+                 case when displayWidth < 1 then
+                   -- for display width less than 1 char unit in the default Normal font,
+                   -- the internal computed width is directly proportional to the width in pixel of a 1-char column (7+5)
+                   displayWidth * 12
+                 else
+                   displayWidth * 7 + 5
+                 end
+               ) -- rounding to get an integer number of pixels
                / 7 
                * 256
              ) / 256
@@ -1387,7 +1513,7 @@ create or replace package body ExcelGen is
     dummy   pls_integer;
     xfId    pls_integer;
   begin
-    dummy := putFont(styles, makeFont('Calibri', 11));
+    dummy := putFont(styles, makeFont(ExcelTypes.DEFAULT_FONT_FAMILY, ExcelTypes.DEFAULT_FONT_SIZE));
     dummy := putFill(styles, makePatternFill('none'));
     dummy := putFill(styles, makePatternFill('gray125'));
     dummy := putBorder(styles, makeBorder());
@@ -2252,7 +2378,7 @@ create or replace package body ExcelGen is
       xutl_xlsb.put_simple_record(stream, 603, int2raw(styles.fills.count)); -- BrtBeginFills
       for fillId in styles.fills.first .. styles.fills.last loop
         -- BrtFill
-        xutl_xlsb.put_PatternFill(stream, styles.fills(fillId).patternFill);
+        xutl_xlsb.put_Fill(stream, styles.fills(fillId));
       end loop;
       xutl_xlsb.put_simple_record(stream, 604); -- BrtEndFills
     end if;
@@ -2403,10 +2529,14 @@ create or replace package body ExcelGen is
     case cell.v.st
     when ST_STRING then
       if cell.v.varchar2_value is not null then
-          sst_idx := put_string(ctx, cell.v.varchar2_value);
-          stream_write(stream, '<c r="'||cellRef
+        sst_idx := put_string(ctx, cell.v.varchar2_value);
+        stream_write(stream, '<c r="'||cellRef
               ||case when cell.xfId != 0 then '" s="'||to_char(cell.xfId) end
               ||'" t="s"><v>'||to_char(sst_idx - 1)||'</v></c>');
+      else
+        stream_write(stream, '<c r="'||cellRef
+              ||case when cell.xfId != 0 then '" s="'||to_char(cell.xfId) end
+              ||'"></c>');
       end if;
               
     when ST_NUMBER then
@@ -2453,8 +2583,11 @@ create or replace package body ExcelGen is
     case cell.v.st
     when ST_STRING then
       if cell.v.varchar2_value is not null then
-          sst_idx := put_string(ctx, cell.v.varchar2_value);
-          xutl_xlsb.put_CellIsst(stream, cell.cn-1, cell.xfId, sst_idx-1);
+        sst_idx := put_string(ctx, cell.v.varchar2_value);
+        xutl_xlsb.put_CellIsst(stream, cell.cn-1, cell.xfId, sst_idx-1);
+      else
+        -- put a blank cell
+        xutl_xlsb.put_CellNumber(stream, cell.cn-1, cell.xfId, null);
       end if;
               
     when ST_NUMBER then
@@ -2508,6 +2641,46 @@ create or replace package body ExcelGen is
         anchorRef.colOffset := anchorTable.anchorRef.colOffset + anchorRef.colOffset;
       end if;
     end if;
+  end;
+
+  procedure applyRangeStyles (
+    ctx  in out nocopy context_t
+  , sd   in out nocopy sheet_definition_t    
+  )
+  is
+    cellSpan   cellSpan_t;
+    rangeXfId  pls_integer;
+    cell       cell_t;
+  begin
+    for i in 1 .. sd.cellRanges.count loop
+      cellSpan := sd.cellRanges(i).span;
+      setAnchorRowOffset(sd, cellSpan.anchorRef);
+      setAnchorColOffset(sd, cellSpan.anchorRef);
+      for rowIdx in cellSpan.anchorRef.rowOffset .. cellSpan.anchorRef.rowOffset + cellSpan.rowSpan - 1 loop      
+        for colIdx in cellSpan.anchorRef.colOffset .. cellSpan.anchorRef.colOffset + cellSpan.colSpan - 1 loop
+          
+          rangeXfId := sd.cellRanges(i).xfId;
+          if sd.cellRanges(i).outsideBorders then
+            rangeXfId := setRangeBorders(rangeXfId, cellSpan, rowIdx, colIdx);
+          end if;
+        
+          if sd.data.rows.exists(rowIdx) and sd.data.rows(rowIdx).cells.exists(colIdx) then
+            cell := sd.data.rows(rowIdx).cells(colIdx);
+            cell.xfId := mergeCellStyle(ctx, rangeXfId, cell.xfId);
+          else
+            cell := null;
+            cell.r := rowIdx;
+            cell.cn := colIdx;
+            cell.c := base26encode(cell.cn);
+            cell.v.st := ST_NUMBER;
+            cell.xfId := rangeXfId;
+            cell.isTableCell := false;
+          end if;
+          sd.data.rows(rowIdx).cells(colIdx) := cell;
+        
+        end loop;
+      end loop;
+    end loop;
   end;
   
   procedure createWorksheetImpl (
@@ -2610,13 +2783,13 @@ create or replace package body ExcelGen is
       setAnchorRowOffset(sd, t.anchorRef);
       r.id := t.anchorRef.rowOffset - 1;
       cell.r := r.id;
+      cell.isTableCell := true;
       
       -- header row
       if t.header.show then
         r.id := r.id + 1;
         -- common cell attributes 
         cell.r := r.id;
-        --cell.xfId := nvl(t.header.xfId, 0);
         if t.rowMap.exists(0) and t.rowMap(0).xfId is not null then
           headerXfId := t.rowMap(0).xfId;
         else
@@ -2665,7 +2838,6 @@ create or replace package body ExcelGen is
       partitionStart := t.sqlMetadata.r_num + nrows;
       partitionStop := partitionStart + t.sqlMetadata.partitionSize - 1;
       
-      --if nrows != 0 or ( nrows = 0 and t.sqlMetadata.partitionId = 0 ) then 
       isSheetEmpty := t.isEmpty and t.sqlMetadata.partitionId != 0;
       
       while nrows != 0 loop
@@ -2696,7 +2868,7 @@ create or replace package body ExcelGen is
               cell.xfId := mergeCellFormat(ctx, cell.xfId, getDefaultFormat(ctx, sd, cell.v.db_type));
             end if;
 
-            -- merge row-level style
+            -- merge table row-level style
             if t.rowMap.exists(t.sqlMetadata.r_num) and t.rowMap(t.sqlMetadata.r_num).xfId is not null then
               cell.xfId := mergeCellStyle(ctx, t.rowMap(t.sqlMetadata.r_num).xfId, cell.xfId);
             end if;
@@ -2714,8 +2886,6 @@ create or replace package body ExcelGen is
         if sd.streamable then
           stream_write(stream, '</row>');
         end if;
-        
-        --t.sqlMetadata.r_num := t.sqlMetadata.r_num + 1;
 
         if cell.r = MAX_ROW_NUMBER then
           if not t.sqlMetadata.partitionBySize then
@@ -2756,6 +2926,8 @@ create or replace package body ExcelGen is
 
     end loop;
     
+    cell.isTableCell := false;
+    
     -- resolve floating cells
     for i in 1 .. sd.floatingCells.count loop
       cell2 := sd.floatingCells(i);
@@ -2770,6 +2942,9 @@ create or replace package body ExcelGen is
       sd.data.rows(cell.r).id := cell.r;
       sd.data.rows(cell.r).cells(cell.cn) := cell;
     end loop;
+    
+    -- ranges
+    applyRangeStyles(ctx, sd);
     
     -- write in-memory cells
     if sd.data.rows.count != 0 then
@@ -2788,14 +2963,20 @@ create or replace package body ExcelGen is
           
           cell := sd.data.rows(rowIdx).cells(colIdx);
           
-          if cell.v.st in (ST_NUMBER, ST_DATETIME) then
-            cell.xfId := mergeCellFormat(ctx, cell.xfId, getDefaultFormat(ctx, sd, cell.v.db_type));
+          -- table cell style has already been dealt with earlier
+          if not cell.isTableCell then
+            
+            -- apply number format if needed
+            if cell.v.st in (ST_NUMBER, ST_DATETIME) then
+              cell.xfId := mergeCellFormat(ctx, cell.xfId, getDefaultFormat(ctx, sd, cell.v.db_type));
+            end if;
+            -- inherit column-level style
+            if sd.columnMap.exists(colIdx) and sd.columnMap(colIdx).xfId is not null then
+              cell.xfId := mergeCellStyle(ctx, sd.columnMap(colIdx).xfId, cell.xfId);
+            end if;
+            
           end if;
           
-          -- inherit column-level style
-          if sd.columnMap.exists(colIdx) and sd.columnMap(colIdx).xfId is not null then
-            cell.xfId := mergeCellStyle(ctx, sd.columnMap(colIdx).xfId, cell.xfId);
-          end if;
           -- inherit row-level style
           if sd.data.rows(rowIdx).props.xfId is not null then
             cell.xfId := mergeCellStyle(ctx, sd.data.rows(rowIdx).props.xfId, cell.xfId);
@@ -2820,6 +3001,12 @@ create or replace package body ExcelGen is
     
     stream_write(stream, '</sheetData>');
     -- END sheetData
+    
+    -- force empty sheet if no tables or cells declared
+    if sd.tableList.count = 0 and sd.floatingCells.count = 0 then
+      isSheetEmpty := false;
+      sd.done := true;
+    end if;
     
     if not isSheetEmpty then
     
@@ -2980,7 +3167,7 @@ create or replace package body ExcelGen is
       while columnId is not null loop
         xutl_xlsb.put_ColInfo( stream
                              , columnId - 1
-                             , colWidth      => nvl(sd.columnMap(columnId).width, DEFAULT_COL_WIDTH)
+                             , colWidth      => getColumnWidth(nvl(sd.columnMap(columnId).width, DEFAULT_COL_WIDTH))
                              , isCustomWidth => ( sd.columnMap(columnId).width is not null )
                              , styleRef      => nvl(sd.columnMap(columnId).xfId, 0)
                              );
@@ -2998,13 +3185,13 @@ create or replace package body ExcelGen is
       setAnchorRowOffset(sd, t.anchorRef);
       r.id := t.anchorRef.rowOffset - 1;
       cell.r := r.id;
+      cell.isTableCell := true;
       
       -- header row
       if t.header.show then
         r.id := r.id + 1;
         -- common cell attributes 
         cell.r := r.id;
-        --cell.xfId := nvl(t.header.xfId, 0);
         if t.rowMap.exists(0) and t.rowMap(0).xfId is not null then
           headerXfId := t.rowMap(0).xfId;
         else
@@ -3014,7 +3201,6 @@ create or replace package body ExcelGen is
         cell.v.st := ST_STRING;
         
         if sd.streamable then
-          --xutl_xlsb.put_RowHdr(stream, cell.r - 1);
           writeRowBin(stream, r, sd.defaultRowHeight);
         end if;
         
@@ -3081,7 +3267,7 @@ create or replace package body ExcelGen is
               cell.xfId := mergeCellFormat(ctx, cell.xfId, getDefaultFormat(ctx, sd, cell.v.db_type));
             end if;
             
-            -- merge row-level style
+            -- merge table row-level style
             if t.rowMap.exists(t.sqlMetadata.r_num) and t.rowMap(t.sqlMetadata.r_num).xfId is not null then
               cell.xfId := mergeCellStyle(ctx, t.rowMap(t.sqlMetadata.r_num).xfId, cell.xfId);
             end if;            
@@ -3095,8 +3281,6 @@ create or replace package body ExcelGen is
           end if;
           
         end loop;
-        
-        --t.sqlMetadata.r_num := t.sqlMetadata.r_num + 1;
         
         if cell.r = MAX_ROW_NUMBER then
           if not t.sqlMetadata.partitionBySize then
@@ -3136,6 +3320,8 @@ create or replace package body ExcelGen is
       sd.tableList(tId) := t;
       
     end loop;
+    
+    cell.isTableCell := false;
 
     -- resolve floating cells
     for i in 1 .. sd.floatingCells.count loop
@@ -3151,6 +3337,9 @@ create or replace package body ExcelGen is
       sd.data.rows(cell.r).id := cell.r;
       sd.data.rows(cell.r).cells(cell.cn) := cell;
     end loop;
+
+    -- ranges
+    applyRangeStyles(ctx, sd);
 
     -- write in-memory cells
     if sd.data.rows.count != 0 then
@@ -3169,14 +3358,20 @@ create or replace package body ExcelGen is
             
           cell := sd.data.rows(rowIdx).cells(colIdx);
           
-          if cell.v.st in (ST_NUMBER, ST_DATETIME) then
-            cell.xfId := mergeCellFormat(ctx, cell.xfId, getDefaultFormat(ctx, sd, cell.v.db_type));
-          end if;          
+          -- table cell style has already been dealt with earlier
+          if not cell.isTableCell then
+            
+            -- apply number format if needed
+            if cell.v.st in (ST_NUMBER, ST_DATETIME) then
+              cell.xfId := mergeCellFormat(ctx, cell.xfId, getDefaultFormat(ctx, sd, cell.v.db_type));
+            end if;
+            -- inherit column-level style
+            if sd.columnMap.exists(colIdx) and sd.columnMap(colIdx).xfId is not null then
+              cell.xfId := mergeCellStyle(ctx, sd.columnMap(colIdx).xfId, cell.xfId);
+            end if; 
+            
+          end if;
           
-          -- inherit column-level style
-          if sd.columnMap.exists(colIdx) and sd.columnMap(colIdx).xfId is not null then
-            cell.xfId := mergeCellStyle(ctx, sd.columnMap(colIdx).xfId, cell.xfId);
-          end if;          
           -- inherit row-level style
           if sd.data.rows(rowIdx).props.xfId is not null then
             cell.xfId := mergeCellStyle(ctx, sd.data.rows(rowIdx).props.xfId, cell.xfId);
@@ -3198,6 +3393,12 @@ create or replace package body ExcelGen is
     end if;
       
     xutl_xlsb.put_simple_record(stream, 146);  -- BrtEndSheetData
+
+    -- force empty sheet if no tables or cells declared
+    if sd.tableList.count = 0 and sd.floatingCells.count = 0 then
+      isSheetEmpty := false;
+      sd.done := true;
+    end if;
     
     if not isSheetEmpty then
     
@@ -3334,16 +3535,15 @@ create or replace package body ExcelGen is
         if tableColumn.name is null then
           sd.tableList(i).columnMap(columnId).name := sd.tableList(i).sqlMetadata.columnList(j).name;         
         end if;
-          
-        -- getting column style : table-level style takes precedence over sheet-level
+        
+        -- table-level column style
         if tableColumn.xfId is not null then
-          cellXf := ctx.workbook.styles.cellXfs(tableColumn.xfId);
-        else
-          -- sheet column style, if defined
-          sheetColumnId := columnId + sd.tableList(i).anchorRef.colOffset - 1;
-          if sd.columnMap.exists(sheetColumnId) and sd.columnMap(sheetColumnId).xfId is not null then
-            cellXf := ctx.workbook.styles.cellXfs(sd.columnMap(sheetColumnId).xfId);
-          end if;
+          cellXf := getCellXf(ctx, tableColumn.xfId);
+        end if;
+        -- inherit from sheet column style if defined
+        sheetColumnId := columnId + sd.tableList(i).anchorRef.colOffset - 1;
+        if sd.columnMap.exists(sheetColumnId) and sd.columnMap(sheetColumnId).xfId is not null then
+          mergeCellStyleImpl(ctx, getCellXf(ctx, sd.columnMap(sheetColumnId).xfId), cellXf);
         end if;
           
         defaultFmt := getDefaultFormat(ctx, sd, sd.tableList(i).sqlMetadata.columnList(j).type);
@@ -3381,9 +3581,28 @@ create or replace package body ExcelGen is
   is
     sd               sheet_definition_t;
     paginationCount  pls_integer := 0;
+    idx              pls_integer;
   begin
     
     sd := ctx.sheetDefinitionMap(sheetIndex);
+    -- apply global style to sheet
+    sd.defaultXfId := mergeCellStyle(ctx, ctx.defaultXfId, sd.defaultXfId);
+    
+    -- apply sheet-level styles to lower levels
+    if sd.defaultXfId is not null then
+      -- row styles
+      idx := sd.data.rows.first;
+      while idx is not null loop
+        sd.data.rows(idx).props.xfId := mergeCellStyle(ctx, sd.defaultXfId, sd.data.rows(idx).props.xfId);
+        idx := sd.data.rows.next(idx);
+      end loop;
+      -- column styles
+      idx := sd.columnMap.first;
+      while idx is not null loop
+        sd.columnMap(idx).xfId := mergeCellStyle(ctx, sd.defaultXfId, sd.columnMap(idx).xfId);
+        idx := sd.columnMap.next(idx);
+      end loop;
+    end if;
     
     sd.tableForest := getTableForest(sd.tableList);
     
@@ -3401,7 +3620,10 @@ create or replace package body ExcelGen is
     -- hyperlinks
     prepareHyperlinks(sd);
     
-    sd.streamable := ( sd.tableList.count = 1 and sd.data.rows.count = 0 );
+    sd.streamable := ( sd.tableList.count = 1 
+                   and sd.data.rows.count = 0 
+                   and sd.floatingCells.count = 0
+                   and sd.cellRanges.count = 0 );
     sd.done := false;
     
     -- layout check
@@ -3936,6 +4158,7 @@ create or replace package body ExcelGen is
     sd.tableList := tableList_t();
     sd.data.hasCells := false;
     sd.floatingCells := floatingCellList_t();
+    sd.cellRanges := cellRangeList_t();
     
     ctx.sheetDefinitionMap(sd.sheetIndex) := sd;
     ctx.sheetIndexMap(sd.sheetName) := sd.sheetIndex;
@@ -4047,8 +4270,7 @@ create or replace package body ExcelGen is
   end;
 
   procedure assertTableExists (
-    p_ctxId    in ctxHandle
-  , p_sheetId  in sheetHandle
+    p_sheetId  in sheetHandle
   , p_tableId  in tableHandle   
   )
   is
@@ -4077,6 +4299,13 @@ create or replace package body ExcelGen is
   begin
     loadContext(p_ctxId);
 
+    if p_anchorTableId is not null then
+      assertTableExists(p_sheetId, p_anchorTableId);
+    else
+      assertPositive(p_anchorRowOffset, 'The table anchor row offset must be a positive integer.');
+      assertPositive(p_anchorColOffset, 'The table anchor column offset must be a positive integer.');
+    end if;
+
     anchorRef.rowOffset := p_anchorRowOffset;
     anchorRef.colOffset := p_anchorColOffset;
     anchorRef.tableId := p_anchorTableId;
@@ -4104,6 +4333,13 @@ create or replace package body ExcelGen is
     anchorRef  anchorRef_t;
   begin
     loadContext(p_ctxId);
+
+    if p_anchorTableId is not null then
+      assertTableExists(p_sheetId, p_anchorTableId);
+    else
+      assertPositive(p_anchorRowOffset, 'The table anchor row offset must be a positive integer.');
+      assertPositive(p_anchorColOffset, 'The table anchor column offset must be a positive integer.');
+    end if;
     
     anchorRef.rowOffset := p_anchorRowOffset;
     anchorRef.colOffset := p_anchorColOffset;
@@ -4130,15 +4366,19 @@ create or replace package body ExcelGen is
     idx    pls_integer;
   begin
     loadContext(ctxId);
-    if anchorTableId is null then  
+    if anchorTableId is null then
+      assertPositive(rowIdx, 'The cell row must be a positive integer.');
+      assertPositive(colIdx, 'The cell column must be a positive integer.');
       cell.r := rowIdx;
       cell.cn := colIdx;
       cell.c := base26encode(cell.cn);
       cell.xfId := nvl(xfId, 0);
       cell.v := data;
+      cell.isTableCell := false;
       currentCtx.sheetDefinitionMap(sheetId).data.rows(rowIdx).id := rowIdx;
       currentCtx.sheetDefinitionMap(sheetId).data.rows(rowIdx).cells(colIdx) := cell; 
     else   
+      assertTableExists(sheetId, anchorTableId);
       cell2.data := data;
       cell2.xfId := nvl(xfId, 0);
       cell2.anchorRef.tableId := anchorTableId;
@@ -4227,8 +4467,8 @@ create or replace package body ExcelGen is
     p_ctxId                in ctxHandle
   , p_sheetId              in sheetHandle
   , p_activePaneAnchorRef  in varchar2 default null
-  , p_showGridLines        in boolean default true
-  , p_showRowColHeaders    in boolean default true
+  , p_showGridLines        in boolean default null
+  , p_showRowColHeaders    in boolean default null
   , p_defaultRowHeight     in number default null
   )
   is
@@ -4239,21 +4479,125 @@ create or replace package body ExcelGen is
       cellRef := parseRangeExpr(p_activePaneAnchorRef).start_ref;
       currentCtx.sheetDefinitionMap(p_sheetId).activePaneAnchorRef := cellRef;
     end if;
-    currentCtx.sheetDefinitionMap(p_sheetId).defaultRowHeight := p_defaultRowHeight;
-    currentCtx.sheetDefinitionMap(p_sheetId).showGridLines := p_showGridLines;
-    currentCtx.sheetDefinitionMap(p_sheetId).showRowColHeaders := p_showRowColHeaders;
+    if p_defaultRowHeight is not null then
+      currentCtx.sheetDefinitionMap(p_sheetId).defaultRowHeight := p_defaultRowHeight;
+    end if;
+    if p_showGridLines is not null then
+      currentCtx.sheetDefinitionMap(p_sheetId).showGridLines := p_showGridLines;
+    end if;
+    if p_showRowColHeaders is not null then
+      currentCtx.sheetDefinitionMap(p_sheetId).showRowColHeaders := p_showRowColHeaders;
+    end if;
     currentCtx.sheetDefinitionMap(p_sheetId).hasProps := ( p_activePaneAnchorRef is not null 
                                                            or p_showGridLines is not null 
                                                            or p_showRowColHeaders is not null );
+  end;
+
+  procedure setRangeStyleImpl (
+    ctx        in out nocopy context_t
+  , sheetId    in pls_integer
+  , cellRange  in cellRange_t
+  )
+  is
+    idx pls_integer;
+  begin
+    ctx.sheetDefinitionMap(sheetId).cellRanges.extend;
+    idx := ctx.sheetDefinitionMap(sheetId).cellRanges.last;
+    ctx.sheetDefinitionMap(sheetId).cellRanges(idx) := cellRange;
+  end;
+  
+  procedure setRangeStyle (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_range           in varchar2
+  , p_style           in cellStyleHandle
+  , p_outsideBorders  in boolean default false
+  )
+  is
+    range      range_t := parseRangeExpr(p_range);
+    cellRange  cellRange_t;
+  begin
+    loadContext(p_ctxId);
+    
+    cellRange.span.anchorRef.rowOffset := range.start_ref.r;
+    cellRange.span.anchorRef.colOffset := range.start_ref.cn;
+    cellRange.span.rowSpan := range.end_ref.r - range.start_ref.r + 1;
+    cellRange.span.colSpan := range.end_ref.cn - range.start_ref.cn + 1;
+    
+    cellRange.xfId := p_style;
+    cellRange.outsideBorders := nvl(p_outsideBorders, false);
+    
+    setRangeStyleImpl(currentCtx, p_sheetId, cellRange);
+  end;
+
+  procedure setRangeStyle (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowOffset       in pls_integer
+  , p_colOffset       in pls_integer
+  , p_rowSpan         in pls_integer
+  , p_colSpan         in pls_integer
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  , p_style           in cellStyleHandle
+  , p_outsideBorders  in boolean default false
+  )
+  is
+    cellRange  cellRange_t;
+  begin
+    loadContext(p_ctxId);
+
+    if p_anchorTableId is not null then
+      assertTableExists(p_sheetId, p_anchorTableId);
+    else
+      assertPositive(p_rowOffset, 'The range row offset must be a positive integer.');
+      assertPositive(p_colOffset, 'The range column offset must be a positive integer.');
+    end if;
+        
+    cellRange.span.anchorRef.rowOffset := p_rowOffset;
+    cellRange.span.anchorRef.colOffset := p_colOffset;
+    cellRange.span.anchorRef.tableId := p_anchorTableId;
+    cellRange.span.anchorRef.anchorPosition := p_anchorPosition;
+    cellRange.span.rowSpan := p_rowSpan;
+    cellRange.span.colSpan := p_colSpan;
+    
+    cellRange.xfId := p_style;
+    cellRange.outsideBorders := nvl(p_outsideBorders, false);
+    
+    setRangeStyleImpl(currentCtx, p_sheetId, cellRange);
+  end;
+
+  procedure mergeCellsImpl (
+    ctx       in out nocopy context_t
+  , sheetId   in pls_integer
+  , cellSpan  in cellSpan_t
+  , xfId      in pls_integer
+  )
+  is
+    idx        pls_integer;
+    cellRange  cellRange_t;
+  begin
+
+    ctx.sheetDefinitionMap(sheetId).mergedCells.extend;
+    idx := ctx.sheetDefinitionMap(sheetId).mergedCells.last;
+    ctx.sheetDefinitionMap(sheetId).mergedCells(idx) := cellSpan;
+
+    if xfId != 0 then
+      cellRange.span := cellSpan;
+      cellRange.xfId := xfId;
+      cellRange.outsideBorders := true;
+      setRangeStyleImpl(ctx, sheetId, cellRange);
+    end if;
+    
   end;
 
   procedure mergeCells (
     p_ctxId    in ctxHandle
   , p_sheetId  in sheetHandle
   , p_range    in varchar2
+  , p_style    in cellStyleHandle default null
   )
   is
-    idx       pls_integer;
     range     range_t := parseRangeExpr(p_range);
     cellSpan  cellSpan_t;
   begin
@@ -4264,9 +4608,7 @@ create or replace package body ExcelGen is
     cellSpan.rowSpan := range.end_ref.r - range.start_ref.r + 1;
     cellSpan.colSpan := range.end_ref.cn - range.start_ref.cn + 1;
     
-    currentCtx.sheetDefinitionMap(p_sheetId).mergedCells.extend;
-    idx := currentCtx.sheetDefinitionMap(p_sheetId).mergedCells.last;
-    currentCtx.sheetDefinitionMap(p_sheetId).mergedCells(idx) := cellSpan;
+    mergeCellsImpl(currentCtx, p_sheetId, cellSpan, p_style);
   end;
 
   procedure mergeCells (
@@ -4278,12 +4620,19 @@ create or replace package body ExcelGen is
   , p_colSpan         in pls_integer
   , p_anchorTableId   in tableHandle default null
   , p_anchorPosition  in pls_integer default null
+  , p_style           in cellStyleHandle default null
   )
   is
-    idx       pls_integer;
     cellSpan  cellSpan_t;
   begin
     loadContext(p_ctxId);
+    
+    if p_anchorTableId is not null then
+      assertTableExists(p_sheetId, p_anchorTableId);
+    else
+      assertPositive(p_rowOffset, 'The range row offset must be a positive integer.');
+      assertPositive(p_colOffset, 'The range column offset must be a positive integer.');
+    end if;
     
     cellSpan.anchorRef.rowOffset := p_rowOffset;
     cellSpan.anchorRef.colOffset := p_colOffset;
@@ -4292,9 +4641,7 @@ create or replace package body ExcelGen is
     cellSpan.rowSpan := p_rowSpan;
     cellSpan.colSpan := p_colSpan;
     
-    currentCtx.sheetDefinitionMap(p_sheetId).mergedCells.extend;
-    idx := currentCtx.sheetDefinitionMap(p_sheetId).mergedCells.last;
-    currentCtx.sheetDefinitionMap(p_sheetId).mergedCells(idx) := cellSpan;
+    mergeCellsImpl(currentCtx, p_sheetId, cellSpan, p_style);
   end;
 
   procedure setTableHeader (
@@ -4308,7 +4655,7 @@ create or replace package body ExcelGen is
     tableHeader  table_header_t;
   begin
     loadContext(p_ctxId);
-    assertTableExists(p_ctxId, p_sheetId, p_tableId);
+    assertTableExists(p_sheetId, p_tableId);
     tableHeader.show := true;
     --tableHeader.xfId := p_style;
     tableHeader.autoFilter := p_autoFilter;
@@ -4367,7 +4714,7 @@ create or replace package body ExcelGen is
     props  rowProperties_t;
   begin
     loadContext(p_ctxId);
-    assertTableExists(p_ctxId, p_sheetId, p_tableId);
+    assertTableExists(p_sheetId, p_tableId);
     props.xfId := p_style;
     currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).rowMap(p_rowId) := props;
   end;
@@ -4384,17 +4731,37 @@ create or replace package body ExcelGen is
     tableColumn  table_column_t;
   begin
     loadContext(p_ctxId);
-    assertTableExists(p_ctxId, p_sheetId, p_tableId);
+    assertTableExists(p_sheetId, p_tableId);
     tableColumn.name := p_columnName;
     tableColumn.xfId := p_style;
     currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).columnMap(p_columnId) := tableColumn;
   end;
 
+  procedure setTableColumnFormat (
+    p_ctxId     in ctxHandle
+  , p_sheetId   in sheetHandle
+  , p_tableId   in pls_integer
+  , p_columnId  in pls_integer
+  , p_format    in varchar2
+  )
+  is
+    xfId         pls_integer;
+  begin
+    loadContext(p_ctxId);
+    assertTableExists(p_sheetId, p_tableId);
+    -- get existing xfId for this column
+    if currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).columnMap.exists(p_columnId) then
+      xfId := currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).columnMap(p_columnId).xfId;
+    end if;
+    xfId := mergeCellFormat(currentCtx, xfId, p_format, force => true);    
+    currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).columnMap(p_columnId).xfId := xfId;
+  end;
+
   procedure setTableProperties (
-    p_ctxId    in ctxHandle
-  , p_sheetId  in sheetHandle
-  , p_tableId  in tableHandle
-  , p_style    in varchar2 default null
+    p_ctxId              in ctxHandle
+  , p_sheetId            in sheetHandle
+  , p_tableId            in tableHandle
+  , p_style              in varchar2 default null
   , p_showFirstColumn    in boolean default false
   , p_showLastColumn     in boolean default false
   , p_showRowStripes     in boolean default true
@@ -4403,7 +4770,7 @@ create or replace package body ExcelGen is
   is
   begin
     loadContext(p_ctxId);
-    assertTableExists(p_ctxId, p_sheetId, p_tableId);
+    assertTableExists(p_sheetId, p_tableId);
     currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).formatAsTable := true;
     currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).tableStyle := p_style;
     currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).showFirstColumn := p_showFirstColumn;
@@ -4500,6 +4867,8 @@ create or replace package body ExcelGen is
     currentCtx.sheetDefinitionMap(p_sheetId).defaultFmts.timestampFmt := p_format;
   end;
 
+  --procedure setBookProperties (
+
   procedure setRowProperties (
     p_ctxId    in ctxHandle
   , p_sheetId  in sheetHandle
@@ -4531,8 +4900,8 @@ create or replace package body ExcelGen is
   , p_width     in number default null
   )
   is
-    props  colProperties_t;
-    tableId      pls_integer;
+    props    colProperties_t;
+    tableId  pls_integer;
   begin
     loadContext(p_ctxId);
     
@@ -4600,13 +4969,38 @@ create or replace package body ExcelGen is
     varIdx       pls_integer;
   begin
     loadContext(p_ctxId);
-    assertTableExists(p_ctxId, p_sheetIndex, p_tableId);
+    assertTableExists(p_sheetIndex, p_tableId);
     bindVarList := currentCtx.sheetDefinitionMap(p_sheetIndex).tableList(p_tableId).sqlMetadata.bindVariables;
     bindVarList.extend;
     varIdx := bindVarList.last;
     bindVarList(varIdx).name := p_bindName;
     bindVarList(varIdx).value := p_bindValue;     
     currentCtx.sheetDefinitionMap(p_sheetIndex).tableList(p_tableId).sqlMetadata.bindVariables := bindVarList;
+  end;
+
+  procedure setDefaultStyle (
+    p_ctxId  in ctxHandle
+  , p_style  in cellStyleHandle
+  )
+  is
+  begin
+    loadContext(p_ctxId);
+    if p_style is not null then
+      currentCtx.defaultXfId := p_style;
+    end if;
+  end;
+
+  procedure setDefaultStyle (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle
+  , p_style    in cellStyleHandle
+  )
+  is
+  begin
+    loadContext(p_ctxId);
+    if p_sheetId is not null and p_style is not null then
+      currentCtx.sheetDefinitionMap(p_sheetId).defaultXfId := p_style;
+    end if;
   end;
 
   -- DEPRECATED
@@ -4657,7 +5051,6 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    assertTableExists(p_ctxId, p_sheetId, p_tableId);
     setBindVariableImpl(p_ctxId, p_sheetId, p_bindName, anydata.ConvertNumber(p_bindValue), p_tableId);
   end;
   
@@ -4670,7 +5063,6 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    assertTableExists(p_ctxId, p_sheetId, p_tableId);
     setBindVariableImpl(p_ctxId, p_sheetId, p_bindName, anydata.ConvertVarchar2(p_bindValue), p_tableId);
   end;
 
@@ -4683,7 +5075,6 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    assertTableExists(p_ctxId, p_sheetId, p_tableId);
     setBindVariableImpl(p_ctxId, p_sheetId, p_bindName, anydata.ConvertDate(p_bindValue), p_tableId);
   end;
 
