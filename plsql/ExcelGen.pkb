@@ -2648,18 +2648,26 @@ create or replace package body ExcelGen is
   , sd   in out nocopy sheet_definition_t    
   )
   is
-    cellSpan   cellSpan_t;
-    rangeXfId  pls_integer;
-    cell       cell_t;
+    cellSpan          cellSpan_t;
+    defaultRangeXfId  pls_integer;
+    rangeXfId         pls_integer;
+    cell              cell_t;
   begin
     for i in 1 .. sd.cellRanges.count loop
       cellSpan := sd.cellRanges(i).span;
       setAnchorRowOffset(sd, cellSpan.anchorRef);
       setAnchorColOffset(sd, cellSpan.anchorRef);
+      
+      defaultRangeXfId := sd.cellRanges(i).xfId;
+      if sd.defaultXfId is not null then
+        defaultRangeXfId := mergeCellStyle(ctx, sd.defaultXfId, defaultRangeXfId);
+      end if;
+      
       for rowIdx in cellSpan.anchorRef.rowOffset .. cellSpan.anchorRef.rowOffset + cellSpan.rowSpan - 1 loop      
         for colIdx in cellSpan.anchorRef.colOffset .. cellSpan.anchorRef.colOffset + cellSpan.colSpan - 1 loop
           
-          rangeXfId := sd.cellRanges(i).xfId;
+          rangeXfId := defaultRangeXfId;
+          
           if sd.cellRanges(i).outsideBorders then
             rangeXfId := setRangeBorders(rangeXfId, cellSpan, rowIdx, colIdx);
           end if;
@@ -2814,6 +2822,8 @@ create or replace package body ExcelGen is
             colIdx := t.anchorRef.colOffset - 1 + columnId;
             if sd.columnMap.exists(colIdx) and sd.columnMap(colIdx).xfId is not null then
               cell.xfId := mergeCellStyle(ctx, sd.columnMap(colIdx).xfId, cell.xfId);
+            elsif sd.defaultXfId is not null then
+              cell.xfId := mergeCellStyle(ctx, sd.defaultXfId, cell.xfId);
             end if;
             
             if sd.streamable then
@@ -2970,9 +2980,11 @@ create or replace package body ExcelGen is
             if cell.v.st in (ST_NUMBER, ST_DATETIME) then
               cell.xfId := mergeCellFormat(ctx, cell.xfId, getDefaultFormat(ctx, sd, cell.v.db_type));
             end if;
-            -- inherit column-level style
+            -- inherit column-level or sheet-level style
             if sd.columnMap.exists(colIdx) and sd.columnMap(colIdx).xfId is not null then
               cell.xfId := mergeCellStyle(ctx, sd.columnMap(colIdx).xfId, cell.xfId);
+            elsif sd.defaultXfId is not null then
+              cell.xfId := mergeCellStyle(ctx, sd.defaultXfId, cell.xfId);
             end if;
             
           end if;
@@ -3216,6 +3228,8 @@ create or replace package body ExcelGen is
             colIdx := t.anchorRef.colOffset - 1 + columnId;
             if sd.columnMap.exists(colIdx) and sd.columnMap(colIdx).xfId is not null then
               cell.xfId := mergeCellStyle(ctx, sd.columnMap(colIdx).xfId, cell.xfId);
+            elsif sd.defaultXfId is not null then
+              cell.xfId := mergeCellStyle(ctx, sd.defaultXfId, cell.xfId);
             end if;
             
             if sd.streamable then
@@ -3365,9 +3379,11 @@ create or replace package body ExcelGen is
             if cell.v.st in (ST_NUMBER, ST_DATETIME) then
               cell.xfId := mergeCellFormat(ctx, cell.xfId, getDefaultFormat(ctx, sd, cell.v.db_type));
             end if;
-            -- inherit column-level style
+            -- inherit column-level or sheet-level style
             if sd.columnMap.exists(colIdx) and sd.columnMap(colIdx).xfId is not null then
               cell.xfId := mergeCellStyle(ctx, sd.columnMap(colIdx).xfId, cell.xfId);
+            elsif sd.defaultXfId is not null then
+              cell.xfId := mergeCellStyle(ctx, sd.defaultXfId, cell.xfId);
             end if; 
             
           end if;
@@ -3540,10 +3556,12 @@ create or replace package body ExcelGen is
         if tableColumn.xfId is not null then
           cellXf := getCellXf(ctx, tableColumn.xfId);
         end if;
-        -- inherit from sheet column style if defined
+        -- inherit from sheet column style, or sheet style, if defined
         sheetColumnId := columnId + sd.tableList(i).anchorRef.colOffset - 1;
         if sd.columnMap.exists(sheetColumnId) and sd.columnMap(sheetColumnId).xfId is not null then
           mergeCellStyleImpl(ctx, getCellXf(ctx, sd.columnMap(sheetColumnId).xfId), cellXf);
+        elsif sd.defaultXfId is not null then
+          mergeCellStyleImpl(ctx, getCellXf(ctx, sd.defaultXfId), cellXf);
         end if;
           
         defaultFmt := getDefaultFormat(ctx, sd, sd.tableList(i).sqlMetadata.columnList(j).type);
@@ -3593,7 +3611,9 @@ create or replace package body ExcelGen is
       -- row styles
       idx := sd.data.rows.first;
       while idx is not null loop
-        sd.data.rows(idx).props.xfId := mergeCellStyle(ctx, sd.defaultXfId, sd.data.rows(idx).props.xfId);
+        if sd.data.rows(idx).props.xfId is not null then
+          sd.data.rows(idx).props.xfId := mergeCellStyle(ctx, sd.defaultXfId, sd.data.rows(idx).props.xfId);
+        end if;
         idx := sd.data.rows.next(idx);
       end loop;
       -- column styles

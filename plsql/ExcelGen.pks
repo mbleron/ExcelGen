@@ -3,7 +3,7 @@ create or replace package ExcelGen is
 
   MIT License
 
-  Copyright (c) 2020-2022 Marc Bleron
+  Copyright (c) 2020-2023 Marc Bleron
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -47,6 +47,8 @@ create or replace package ExcelGen is
     Marc Bleron       2022-11-18     Renamed makeCellRef parameters
     Marc Bleron       2022-11-19     Added gradientFill
     Marc Bleron       2022-11-20     Fixed streamable flag in createWorksheet
+    Marc Bleron       2023-02-02     Broken style inheritance between sheet and 
+                                     descendant levels
 ====================================================================================== */
 
   -- file types

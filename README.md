@@ -592,7 +592,6 @@ procedure setSheetProperties (
 , p_showGridLines        in boolean default null
 , p_showRowColHeaders    in boolean default null
 , p_defaultRowHeight     in number default null
-, p_defaultStyle         in cellStyleHandle default null
 );
 ```
 
@@ -604,7 +603,6 @@ Parameter|Description|Mandatory
 `p_showGridLines`|Hide or show grid lines on the sheet. Default is `true` (show).|No
 `p_showRowColHeaders`|Hide or show row and column headers on the sheet. Default is `true` (show).|No
 `p_defaultRowHeight`|Default row height on this sheet, in points.|No
-`p_defaultStyle`|Default sheet-level cell style. <br/>Cell styles declared at lower levels (column, row, cell) will inherit from this style.|No
 
 ---
 ### setTableProperties procedure
@@ -1950,6 +1948,11 @@ Shows available cell styling options.
 [style-showcase.sql](./test_cases/style-showcase.sql) &#8594; [style-showcase.xlsx](./samples/style-showcase.xlsx)
 
 ## CHANGELOG
+
+### 3.1.1 (2023-02-02)
+
+* Fix : issue #42
+* Fix : issue #43
 
 ### 3.1 (2023-01-03)
 
