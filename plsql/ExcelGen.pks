@@ -49,6 +49,8 @@ create or replace package ExcelGen is
     Marc Bleron       2022-11-20     Fixed streamable flag in createWorksheet
     Marc Bleron       2023-02-02     Broken style inheritance between sheet and 
                                      descendant levels
+    Lee Lindley,
+    Marc Bleron       2023-02-03     Added getRowCount function
 ====================================================================================== */
 
   -- file types
@@ -607,6 +609,13 @@ $end
   , p_directory  in varchar2
   , p_filename   in varchar2
   );
+
+  function getRowCount (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle 
+  , p_tableId  in tableHandle default null
+  ) 
+  return pls_integer;
 
 end ExcelGen;
 /

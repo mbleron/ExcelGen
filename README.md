@@ -112,6 +112,7 @@ For simple requirements such as a single-table sheet, shortcut procedures and fu
   * [setTableColumnProperties](#settablecolumnproperties-procedure)
   * [setTableColumnFormat](#settablecolumnformat-procedure)
   * [setTableRowProperties](#settablerowproperties-procedure)
+  * [getRowCount](#getrowcount-function)
 * Cell management
   * [putCell](#putcell-procedure)
   * [putNumberCell](#putnumbercell-procedure)
@@ -1081,6 +1082,27 @@ Parameter|Description|Mandatory
 `p_filename`|File name.|Yes
 
 ---
+### getRowCount function
+This function returns the total number of rows fetched for a given table.  
+The table may be partitioned over multiple sheets.  
+This function must be called after [getFileContent](#getfilecontent-function) or [createFile](#createfile-procedure).  
+
+```sql
+function getRowCount (
+  p_ctxId    in ctxHandle
+, p_sheetId  in sheetHandle 
+, p_tableId  in tableHandle default null
+) 
+return pls_integer;
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
+`p_tableId`|Table handle.<br/> If NULL or omitted, the first table of the sheet is used.|No
+
+---
 ### STYLING
 
 ### makeRgbColor function
@@ -1949,8 +1971,9 @@ Shows available cell styling options.
 
 ## CHANGELOG
 
-### 3.1.1 (2023-02-02)
+### 3.2 (2023-02-04)
 
+* Enhancement : issue #44
 * Fix : issue #42
 * Fix : issue #43
 

@@ -2912,7 +2912,7 @@ create or replace package body ExcelGen is
       
       end loop;
       
-      debug('end fetch');
+      debug(utl_lms.format_message('end fetch: sheetId=%d tableId=%d rowCount=%d', sd.sheetIndex, tId, t.sqlMetadata.r_num));
       
       if nrows = 0 then
         debug('close cursor');
@@ -3311,7 +3311,7 @@ create or replace package body ExcelGen is
           
       end loop;
       
-      debug('end fetch');
+      debug(utl_lms.format_message('end fetch: sheetId=%d tableId=%d rowCount=%d', sd.sheetIndex, tId, t.sqlMetadata.r_num));
 
       if nrows = 0 then
         debug('close cursor');
@@ -3659,6 +3659,8 @@ create or replace package body ExcelGen is
         createWorksheetBinImpl(ctx, sd);
       end case;
     end loop;
+    
+    ctx.sheetDefinitionMap(sheetIndex) := sd;
 
   end;
   
@@ -5239,6 +5241,19 @@ $end
   begin
     writeBlobToFile(p_directory, p_filename, fileContent);
     dbms_lob.freetemporary(fileContent);
+  end;
+
+  function getRowCount (
+    p_ctxId    in ctxHandle
+  , p_sheetId  in sheetHandle 
+  , p_tableId  in tableHandle default null
+  ) 
+  return pls_integer
+  is
+    tableId  pls_integer := nvl(p_tableId, currentCtx.sheetDefinitionMap(p_sheetId).tableList.first);
+  begin
+    loadContext(p_ctxId);
+    return currentCtx.sheetDefinitionMap(p_sheetId).tableList(tableId).sqlMetadata.r_num;
   end;
 
 begin
