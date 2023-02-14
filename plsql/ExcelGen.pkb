@@ -277,15 +277,15 @@ create or replace package body ExcelGen is
   );
   
   type table_column_t is record (
-    name  varchar2(1024)
-  , xfId  pls_integer
+    name        varchar2(1024)
+  , xfId        pls_integer
+  , headerXfId  pls_integer
   );
   
   type table_column_map_t is table of table_column_t index by pls_integer;
   
   type table_header_t is record (
     show        boolean
-  --, xfId        pls_integer
   , isFrozen    boolean
   , autoFilter  boolean
   );
@@ -2798,6 +2798,7 @@ create or replace package body ExcelGen is
         r.id := r.id + 1;
         -- common cell attributes 
         cell.r := r.id;
+                
         if t.rowMap.exists(0) and t.rowMap(0).xfId is not null then
           headerXfId := t.rowMap(0).xfId;
         else
@@ -2820,6 +2821,13 @@ create or replace package body ExcelGen is
             cell.xfId := headerXfId;
             -- sheet-level column idx
             colIdx := t.anchorRef.colOffset - 1 + columnId;
+            
+            -- apply column-specific header style, inheriting from table header style
+            if t.columnMap.exists(colIdx) and t.columnMap(colIdx).headerXfId is not null then
+              cell.xfId := mergeCellStyle(ctx, cell.xfId, t.columnMap(colIdx).headerXfId);
+            end if;
+            
+            -- inherit from sheet column, sheet or workbook-level style
             if sd.columnMap.exists(colIdx) and sd.columnMap(colIdx).xfId is not null then
               cell.xfId := mergeCellStyle(ctx, sd.columnMap(colIdx).xfId, cell.xfId);
             elsif sd.defaultXfId is not null then
@@ -3204,6 +3212,7 @@ create or replace package body ExcelGen is
         r.id := r.id + 1;
         -- common cell attributes 
         cell.r := r.id;
+        
         if t.rowMap.exists(0) and t.rowMap(0).xfId is not null then
           headerXfId := t.rowMap(0).xfId;
         else
@@ -3226,6 +3235,13 @@ create or replace package body ExcelGen is
             cell.xfId := headerXfId;
             -- sheet-level column idx
             colIdx := t.anchorRef.colOffset - 1 + columnId;
+            
+            -- apply column-specific header style, inheriting from table header style
+            if t.columnMap.exists(colIdx) and t.columnMap(colIdx).headerXfId is not null then
+              cell.xfId := mergeCellStyle(ctx, cell.xfId, t.columnMap(colIdx).headerXfId);
+            end if;
+            
+            -- inherit from sheet column, sheet or workbook-level style            
             if sd.columnMap.exists(colIdx) and sd.columnMap(colIdx).xfId is not null then
               cell.xfId := mergeCellStyle(ctx, sd.columnMap(colIdx).xfId, cell.xfId);
             elsif sd.defaultXfId is not null then
@@ -4742,12 +4758,13 @@ create or replace package body ExcelGen is
   end;
 
   procedure setTableColumnProperties (
-    p_ctxId       in ctxHandle
-  , p_sheetId     in sheetHandle
-  , p_tableId     in pls_integer
-  , p_columnId    in pls_integer
-  , p_columnName  in varchar2 default null
-  , p_style       in cellStyleHandle default null
+    p_ctxId        in ctxHandle
+  , p_sheetId      in sheetHandle
+  , p_tableId      in pls_integer
+  , p_columnId     in pls_integer
+  , p_columnName   in varchar2 default null
+  , p_style        in cellStyleHandle default null
+  , p_headerStyle  in cellStyleHandle default null
   )
   is
     tableColumn  table_column_t;
@@ -4756,6 +4773,7 @@ create or replace package body ExcelGen is
     assertTableExists(p_sheetId, p_tableId);
     tableColumn.name := p_columnName;
     tableColumn.xfId := p_style;
+    tableColumn.headerXfId := p_headerStyle;
     currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).columnMap(p_columnId) := tableColumn;
   end;
 

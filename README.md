@@ -658,17 +658,18 @@ Parameter|Description|Mandatory
 
 ---
 ### setTableColumnProperties procedure
-This procedure sets table-level column properties: column name and cell style.
+This procedure sets table-level column properties: column name, cell style and header style.
 If a table header is displayed, a column name set this way overrides the SQL name from the source query.  
 
 ```sql
 procedure setTableColumnProperties (
-  p_ctxId       in ctxHandle
-, p_sheetId     in sheetHandle
-, p_tableId     in pls_integer
-, p_columnId    in pls_integer
-, p_columnName  in varchar2 default null
-, p_style       in cellStyleHandle default null
+  p_ctxId        in ctxHandle
+, p_sheetId      in sheetHandle
+, p_tableId      in pls_integer
+, p_columnId     in pls_integer
+, p_columnName   in varchar2 default null
+, p_style        in cellStyleHandle default null
+, p_headerStyle  in cellStyleHandle default null
 );
 ```
 
@@ -680,6 +681,7 @@ Parameter|Description|Mandatory
 `p_columnId`|Column index.|Yes
 `p_columnName`|Column name.|No
 `p_style`|Cell style handle created via [makeCellStyle](#makecellstyle-function) or [makeCellStyleCss](#makecellstylecss-function) function.|No
+`p_headerStyle`|Header cell style handle created via [makeCellStyle](#makecellstyle-function) or [makeCellStyleCss](#makecellstylecss-function) function. <br/>This style inherits from the table header style defined via [setTableHeader](#settableheader-procedure) procedure, in priority to higher-level settings (sheet column, sheet or workbook).|No
 
 ---
 ### setTableColumnFormat procedure
@@ -1970,6 +1972,10 @@ Shows available cell styling options.
 [style-showcase.sql](./test_cases/style-showcase.sql) &#8594; [style-showcase.xlsx](./samples/style-showcase.xlsx)
 
 ## CHANGELOG
+
+### 3.3 (2023-02-14)
+
+* Enhancement : issue #45
 
 ### 3.2 (2023-02-04)
 

@@ -51,6 +51,7 @@ create or replace package ExcelGen is
                                      descendant levels
     Lee Lindley,
     Marc Bleron       2023-02-03     Added getRowCount function
+    Marc Bleron       2023-02-14     Added p_headerStyle to setTableColumnProperties
 ====================================================================================== */
 
   -- file types
@@ -458,12 +459,13 @@ create or replace package ExcelGen is
   );
 
   procedure setTableColumnProperties (
-    p_ctxId       in ctxHandle
-  , p_sheetId     in sheetHandle
-  , p_tableId     in pls_integer
-  , p_columnId    in pls_integer
-  , p_columnName  in varchar2 default null
-  , p_style       in cellStyleHandle default null
+    p_ctxId        in ctxHandle
+  , p_sheetId      in sheetHandle
+  , p_tableId      in pls_integer
+  , p_columnId     in pls_integer
+  , p_columnName   in varchar2 default null
+  , p_style        in cellStyleHandle default null
+  , p_headerStyle  in cellStyleHandle default null
   );
 
   procedure setTableColumnFormat (
