@@ -12,7 +12,7 @@ It supports encryption, cell merging, various formatting options through a built
 * [Quick Start](#quick-start)  
 * [ExcelGen Subprograms and Usage](#excelgen-subprograms-and-usage)  
 * [Style specifications](#style-specifications)  
-* [Examples](#examples-1)  
+* [Examples](#examples-2)  
 * [CHANGELOG](#changelog)  
 
 ## What's New in...
