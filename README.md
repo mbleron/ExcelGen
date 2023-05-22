@@ -12,7 +12,7 @@ It supports encryption, cell merging, various formatting options through a built
 * [Quick Start](#quick-start)  
 * [ExcelGen Subprograms and Usage](#excelgen-subprograms-and-usage)  
 * [Style specifications](#style-specifications)  
-* [Examples](#examples-1)  
+* [Examples](#examples-3)  
 * [CHANGELOG](#changelog)  
 
 ## What's New in...
@@ -118,6 +118,7 @@ For simple requirements such as a single-table sheet, shortcut procedures and fu
   * [putNumberCell](#putnumbercell-procedure)
   * [putStringCell](#putstringcell-procedure)
   * [putDateCell](#putdatecell-procedure)
+  * [putRichTextCell](#putrichtextcell-procedure)
   * [mergeCells](#mergecells-procedure)
   * [makeCellRef](#makecellref-function)
 * Style management
@@ -346,6 +347,26 @@ procedure putDateCell (
 , p_anchorPosition  in pls_integer default null
 );
 ```
+
+---
+### putRichTextCell procedure  
+Sets a rich text content in a given cell.
+See [putCell](#putcell-procedure) procedure for a description of common parameters.
+```sql
+procedure putRichTextCell (
+  p_ctxId           in ctxHandle
+, p_sheetId         in sheetHandle
+, p_rowIdx          in pls_integer
+, p_colIdx          in pls_integer
+, p_value           in varchar2
+, p_style           in cellStyleHandle default null 
+, p_anchorTableId   in tableHandle default null
+, p_anchorPosition  in pls_integer default null
+);
+```
+
+The value passed to this procedure (`p_value`) must be a VARCHAR2 string containing a valid XHTML content.  
+See [Style specifications/Rich Text](#rich-text) for more information about the expected syntax and supported XHTML formatting elements.  
 
 ---
 ### addSheetFromQuery procedure and function
@@ -1197,12 +1218,13 @@ This function builds an instance of a cell font.
 
 ```sql
 function makeFont (
-  p_name   in varchar2
-, p_sz     in pls_integer
-, p_b      in boolean default false
-, p_i      in boolean default false
-, p_color  in varchar2 default null
-, p_u      in varchar2 default null
+  p_name       in varchar2 default null
+, p_sz         in pls_integer default null
+, p_b          in boolean default false
+, p_i          in boolean default false
+, p_color      in varchar2 default null
+, p_u          in varchar2 default null
+, p_vertAlign  in varchar2 default null
 )
 return CT_Font;
 ```
@@ -1215,6 +1237,7 @@ Parameter|Description|Mandatory
 `p_i`|Italic font style (true\|false).|No
 `p_color`|Font [color](#color-specification).|No
 `p_u`|Underline style. <br/>One of `none`, `single`, `double`, `singleAccounting`, `doubleAccounting`. Default is `none`.|No
+`p_vertAlign`|Font vertical alignment: superscript or subscript. <br/>One of `superscript`, `subscript`, or `baseline` (default).|No
 
 ---
 ### makePatternFill function
@@ -1235,7 +1258,7 @@ Parameter|Description|Mandatory
 `p_fgColor`|Foreground [color](#color-specification) of the pattern.|No
 `p_bgColor`|Background [color](#color-specification) of the pattern.|No
 
-Note :
+Note:  
 For a solid fill (no pattern), the color must be specified using the foreground color parameter.  
 
 ---
@@ -1486,7 +1509,7 @@ Name|Description  |Standard
 [text-decoration](https://developer.mozilla.org/en-US/docs/Web/CSS/text-decoration)|`text-decoration` shorthand property.  <br/>ExcelGen only supports `text-decoration-line` and `text-decoration-style` components.|:heavy_check_mark:
 [text-decoration-line](https://developer.mozilla.org/en-US/docs/Web/CSS/text-decoration-line)|Kind of text decoration. <br/>Supported values: <ins>`none`</ins>, `underline`.|:heavy_check_mark:
 [text-decoration-style](https://developer.mozilla.org/en-US/docs/Web/CSS/text-decoration-style)|Style of the text decoration line. <br>Supported values: <ins>`solid`</ins>, `double`, *`single-accounting`*, *`double-accounting`*.|:heavy_check_mark:
-[vertical-align](https://developer.mozilla.org/en-US/docs/Web/CSS/vertical-align)|`vertical-align` property. <br/>Supported values: `top`, `middle`, `bottom`, *`justify`*, *`distributed`*.|:heavy_check_mark:
+[vertical-align](https://developer.mozilla.org/en-US/docs/Web/CSS/vertical-align)|`vertical-align` property. <br/>Supported values: `top`, `middle`, `bottom`, *`justify`*, *`distributed`*, `baseline`, `sub`, `super`. <br/>Last two values `sub` and `super` map to Excel font attributes 'Subscript' and 'Superscript' respectively.|:heavy_check_mark:
 [text-align](https://developer.mozilla.org/en-US/docs/Web/CSS/text-align)|`text-align` property. <br/>Supported values: `left`, `center`, `right`, `justify`, *`fill`*, *`center-across`*, *`distributed`*.|:heavy_check_mark:
 [white-space](https://developer.mozilla.org/en-US/docs/Web/CSS/white-space)|`white-space` property. <br/>Supported values: <ins>`pre`</ins>, `pre-wrap`. <br/>Default value is `pre`, which maps to the default "no wrap" mode for a cell.|:heavy_check_mark:
 [color](https://developer.mozilla.org/en-US/docs/Web/CSS/color)|`color` property, sets the text and text decoration color. <br/>Supported values: see [Color specification](#color-specification).|:heavy_check_mark:
@@ -1580,6 +1603,60 @@ background:
 ![css-gradient-example-3](./resources/css-gradient-example-3.png)
 &nbsp;  
 
+### Rich Text
+
+ExcelGen supports Rich Text for cell content. That allows the user to style sequences of characters (aka "text runs") individually, instead of formatting the cell text as a whole.  
+A Rich Text content must be specified as a string representing a valid XHTML fragment. Here are the supported formatting elements:  
+Tag|Description
+--|--
+`<b></b>`|Puts text in **bold**
+`<i></i>`|Puts text in *italic*
+`<u></u>`|Underlines text with a single line
+`<span style=""></span>`|Applies [CSS](#css) provided in the style attribute
+`<sub></sub>`|Puts text in <sub>subscript</sub>
+`<sup></sup>`|Puts text in <sup>superscript</sup>
+`<br/>`|Puts a line break
+
+If the cell already has a font style defined, text runs will inherit from it.  
+
+#### Examples
+* Rich Text with cell style inheritance  
+In this first example, the Rich Text feature is used to apply a different color to each character, while the font size and weight is set at cell level:  
+```sql
+style1 := ExcelGen.makeCellStyleCss(ctx, 'font-size:20pt;font-weight:bold');
+
+ExcelGen.putRichTextCell(
+  p_ctxId => ctx
+, p_sheetId => sheet1
+, p_rowIdx => 1
+, p_colIdx => 1
+, p_value => 
+   '<span style="color:#FF0000">R</span>
+    <span style="color:#FFFF00">A</span>
+    <span style="color:#00FF00">I</span>
+    <span style="color:#00FFFF">N</span>
+    <span style="color:#0000FF">B</span>
+    <span style="color:#FF00FF">O</span>
+    <span style="color:#FF0000">W</span>'
+, p_style => style1
+);
+```
+![rich-text-01](./resources/rich-text-01.png)  
+
+* Inline formatting with nested styling elements  
+```sql
+ExcelGen.putRichTextCell(
+  p_ctxId   => ctx
+, p_sheetId => sheet1
+, p_rowIdx  => 2
+, p_colIdx  => 1
+, p_value   => 
+  'The chemical formula of glucose is <span style="color:blue;font-weight:bold">'||regexp_replace('C6H12O6','(\d+)','<sub>\1</sub>')||'</span>'
+);
+```
+![rich-text-02](./resources/rich-text-02.png)  
+
+
 ### Predefined table styles  
 
 __Light__  
@@ -1628,6 +1705,8 @@ center|middle
 bottom|bottom
 justify|justify
 distributed|distributed
+
+CSS values `sub` and `super` are also supported and map to Excel font attributes 'Subscript' and 'Superscript' respectively.  
 
 ### Pattern types
 

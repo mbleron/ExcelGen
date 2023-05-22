@@ -53,9 +53,13 @@ create or replace package body ExcelGen is
   ST_DATETIME            constant pls_integer := 2;
   ST_LOB                 constant pls_integer := 3;
   ST_VARIANT             constant pls_integer := 4;
+  ST_RICHTEXT            constant pls_integer := 5;
 
   buffer_too_small       exception;
   pragma exception_init (buffer_too_small, -19011);
+  
+  xml_parse_exception    exception;
+  pragma exception_init (xml_parse_exception, -31011);
 
   type stream_t is record (
     content   clob
@@ -74,6 +78,7 @@ create or replace package body ExcelGen is
   , tstz_value      timestamp with time zone
   , clob_value      clob
   , anydata_value   anydata
+  , xml_value       xmltype
   );
   
   type data_map_t is table of data_t index by pls_integer;
@@ -109,7 +114,10 @@ create or replace package body ExcelGen is
   type column_set_t is table of varchar2(3) index by pls_integer;
 
   type string_map_t is table of pls_integer index by varchar2(32767);
-  type string_list_t is table of varchar2(32767);
+  type string_t is record (value varchar2(32767), isRichText boolean := false);
+  type string_list_t is table of string_t;
+  --type string_list_t is table of varchar2(32767);
+  type richText_cache_t is table of ExcelTypes.CT_RichText index by pls_integer;
   
   type CT_Relationship is record (
     Type    varchar2(256)
@@ -362,7 +370,6 @@ create or replace package body ExcelGen is
   , defaultFmts          defaultFmts_t
   , defaultXfId          pls_integer
   , columnMap            colProperties_map_t
-  --, rowMap               rowProperties_map_t
   , hasCustomColProps    boolean
   --, columnLinkMap   link_map_t
   , tableList            tableList_t
@@ -402,6 +409,7 @@ create or replace package body ExcelGen is
   , defaultXfId          pls_integer
   , encryptionInfo       encryption_info_t
   , fileType             pls_integer
+  , rt_cache             richText_cache_t
   );
   
   type context_cache_t is table of context_t index by pls_integer;
@@ -940,17 +948,18 @@ create or replace package body ExcelGen is
   end;
 
   function makeFont (
-    p_name   in varchar2
-  , p_sz     in pls_integer
-  , p_b      in boolean default false
-  , p_i      in boolean default false
-  , p_color  in varchar2 default null
-  , p_u      in varchar2 default null
+    p_name       in varchar2 default null
+  , p_sz         in pls_integer default null
+  , p_b          in boolean default false
+  , p_i          in boolean default false
+  , p_color      in varchar2 default null
+  , p_u          in varchar2 default null
+  , p_vertAlign  in varchar2 default null
   )
   return CT_Font
   is
   begin
-    return ExcelTypes.makeFont(p_name, p_sz, p_b, p_i, p_color, p_u);
+    return ExcelTypes.makeFont(p_name, p_sz, p_b, p_i, p_color, p_u, p_vertAlign);
   end;
   
   function putFont (
@@ -1165,6 +1174,17 @@ create or replace package body ExcelGen is
   is
   begin
     return ctx.workbook.styles.cellXfs(xfId);
+  end;
+
+  function getCellFont (
+    ctx   in context_t
+  , xfId  in pls_integer    
+  )
+  return CT_Font
+  is
+    xf  CT_Xf := getCellXf(ctx, xfId);
+  begin
+    return ctx.workbook.styles.fonts(xf.fontId);
   end;
 
   procedure putNamedCellStyle (
@@ -1652,8 +1672,9 @@ create or replace package body ExcelGen is
   end;
   
   function put_string (
-    ctx in out nocopy context_t
-  , str in varchar2
+    ctx       in out nocopy context_t
+  , str       in varchar2
+  , richText  in boolean default false
   ) 
   return pls_integer
   is
@@ -1664,10 +1685,23 @@ create or replace package body ExcelGen is
       idx := ctx.string_list.count + 1;
       ctx.string_map(str) := idx;
       ctx.string_list.extend;
-      ctx.string_list(idx) := str;
+      ctx.string_list(idx).value := str;
+      ctx.string_list(idx).isRichText := richText;
     else
       idx := ctx.string_map(str);
     end if;
+    return idx;
+  end;
+
+  function put_rt (
+    ctx  in out nocopy context_t
+  , rt   in ExcelTypes.CT_RichText
+  ) 
+  return pls_integer
+  is
+    idx  pls_integer := put_string(ctx, rt.content, true);
+  begin
+    ctx.rt_cache(idx) := rt;
     return idx;
   end;
 
@@ -2459,9 +2493,15 @@ create or replace package body ExcelGen is
       stream := new_stream();
       stream_write(stream, '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="'||to_char(ctx.string_cnt)||'" uniqueCount="'||to_char(ctx.string_map.count)||'">');
       for i in 1 .. ctx.string_list.count loop
-        stream_write(stream, '<si><t>');
-        stream_write(stream, ctx.string_list(i), escape_xml => true);
-        stream_write(stream, '</t></si>');
+        stream_write(stream, '<si>');
+        if not ctx.string_list(i).isRichText then
+          stream_write(stream, '<t>');
+          stream_write(stream, ctx.string_list(i).value, escape_xml => true);
+          stream_write(stream, '</t>');
+        else
+          stream_write(stream, ctx.string_list(i).value);
+        end if;
+        stream_write(stream, '</si>');
       end loop;
       stream_write(stream, '</sst>');
       stream_flush(stream);
@@ -2474,13 +2514,39 @@ create or replace package body ExcelGen is
     ctx   in out nocopy context_t
   )
   is
-    stream  xutl_xlsb.Stream_T;
+    stream       xutl_xlsb.Stream_T;
+    textRuns     ExcelTypes.CT_TextRunList;
+    strRunArray  xutl_xlsb.StrRunArray_T;
+    str          varchar2(32767);
+    pos          pls_integer;
   begin
     if ctx.string_cnt != 0 then
       stream := xutl_xlsb.new_stream();
       xutl_xlsb.put_BeginSst(stream, ctx.string_cnt, ctx.string_map.count); -- BrtBeginSst
       for i in 1 .. ctx.string_list.count loop
-        xutl_xlsb.put_SSTItem(stream, ctx.string_list(i));
+      
+        if not ctx.string_list(i).isRichText then
+          
+          xutl_xlsb.put_SSTItem(stream, ctx.string_list(i).value);
+          
+        else
+          
+          textRuns := ctx.rt_cache(i).runs;
+          strRunArray := xutl_xlsb.StrRunArray_T();
+          str := null;
+          pos := 0;
+          for j in 1 .. textRuns.count loop
+            strRunArray.extend;
+            strRunArray(j).ich := pos;
+            strRunArray(j).ifnt := putFont(ctx.workbook.styles, textRuns(j).font);
+            str := str || textRuns(j).text;
+            pos := pos + length(textRuns(j).text);
+          end loop;
+          
+          xutl_xlsb.put_SSTItem(stream, str, strRunArray);
+          
+        end if;
+      
       end loop;
       xutl_xlsb.put_simple_record(stream, 160); -- BrtEndSst
       xutl_xlsb.flush_stream(stream);
@@ -2547,11 +2613,10 @@ create or replace package body ExcelGen is
     when ST_DATETIME then
       stream_write(stream, '<c r="'||cellRef||'" s="'||to_char(cell.xfId)||'"><v>'||cell.v.varchar2_value||'</v></c>');
               
-    when ST_LOB then      
+    when ST_LOB then
       if cell.v.clob_value is not null and dbms_lob.getlength(cell.v.clob_value) != 0 then
         -- try conversion to VARCHAR2
         begin
-          --cell.v.varchar2_value := to_char(cell.v.clob_value);
           sst_idx := put_string(ctx, stripXmlControlChars(to_char(cell.v.clob_value)));
           stream_write(stream, '<c r="'||cellRef
               ||case when cell.xfId != 0 then '" s="'||to_char(cell.xfId) end
@@ -2566,6 +2631,12 @@ create or replace package body ExcelGen is
             stream_write(stream, '</t></is></c>');
         end;
       end if;
+      
+    when ST_RICHTEXT then
+      sst_idx := put_rt(ctx, ExcelTypes.makeRichText(cell.v.xml_value, getCellFont(ctx, cell.xfId)));
+      stream_write(stream, '<c r="'||cellRef
+            ||case when cell.xfId != 0 then '" s="'||to_char(cell.xfId) end
+            ||'" t="s"><v>'||to_char(sst_idx - 1)||'</v></c>');
               
     end case;
         
@@ -2608,6 +2679,10 @@ create or replace package body ExcelGen is
             xutl_xlsb.put_CellSt(stream, cell.cn-1, cell.xfId, lobValue => cell.v.clob_value);
         end;
       end if;
+      
+    when ST_RICHTEXT then
+      sst_idx := put_rt(ctx, ExcelTypes.makeRichText(cell.v.xml_value, getCellFont(ctx, cell.xfId)));
+      xutl_xlsb.put_CellIsst(stream, cell.cn-1, cell.xfId, sst_idx-1);
               
     end case;
         
@@ -3813,11 +3888,11 @@ create or replace package body ExcelGen is
     
     addPart(ctx, part);
     
-    createStylesheet(ctx, ctx.workbook.styles, 'xl/styles.xml');
-    addRelationship(ctx, part.name, RS_STYLES, 'xl/styles.xml');
-    
     createSharedStrings(ctx);
     addRelationship(ctx, part.name, RS_SHAREDSTRINGS, 'xl/sharedStrings.xml');
+
+    createStylesheet(ctx, ctx.workbook.styles, 'xl/styles.xml');
+    addRelationship(ctx, part.name, RS_STYLES, 'xl/styles.xml');
     
     for tableId in 1 .. ctx.workbook.tables.count loop
       createTable(ctx, tableId);
@@ -3896,11 +3971,11 @@ create or replace package body ExcelGen is
     part.isBinary := true;
     addPart(ctx, part);
     
-    createStylesheetBin(ctx, ctx.workbook.styles, 'xl/styles.bin');
-    addRelationship(ctx, part.name, RS_STYLES, 'xl/styles.bin');
-    
     createSharedStringsBin(ctx);
     addRelationship(ctx, part.name, RS_SHAREDSTRINGS, 'xl/sharedStrings.bin');
+    
+    createStylesheetBin(ctx, ctx.workbook.styles, 'xl/styles.bin');
+    addRelationship(ctx, part.name, RS_STYLES, 'xl/styles.bin');
     
     for tableId in 1 .. ctx.workbook.tables.count loop
       createTableBin(ctx, tableId);
@@ -4478,6 +4553,28 @@ create or replace package body ExcelGen is
   begin
     prepareDateValue(data, p_value);
     putCellImpl(p_ctxId, p_sheetId, p_rowIdx, p_colIdx, data, p_style, p_anchorTableId, p_anchorPosition);
+  end;
+
+  procedure putRichTextCell (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowIdx          in pls_integer
+  , p_colIdx          in pls_integer
+  , p_value           in varchar2
+  , p_style           in cellStyleHandle default null 
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  )
+  is
+    data  data_t;
+  begin
+    data.xml_value := xmltype('<root>'||p_value||'</root>');
+    data.st := ST_RICHTEXT;
+    data.db_type := dbms_sql.VARCHAR2_TYPE;
+    putCellImpl(p_ctxId, p_sheetId, p_rowIdx, p_colIdx, data, p_style, p_anchorTableId, p_anchorPosition);
+  exception
+    when xml_parse_exception then
+      error('Invalid XHTML fragment');
   end;
   
   procedure putCell (

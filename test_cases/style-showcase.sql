@@ -346,6 +346,39 @@ declare
     end loop;    
   end;
 
+  procedure makeRichTextSheet is
+    sheet7  ExcelGen.sheetHandle := ExcelGen.addSheet(ctx, 'Rich Text');
+    style1  ExcelGen.cellStyleHandle := ExcelGen.makeCellStyleCss(ctx, 'font-size:20pt;font-weight:bold;text-align:center;vertical-align:middle');
+  begin
+    ExcelGen.putRichTextCell(
+      p_ctxId => ctx
+    , p_sheetId => sheet7
+    , p_rowIdx => 1
+    , p_colIdx => 1
+    , p_value => 
+      '<span style="color:#FF0000">R</span>
+       <span style="color:#FFFF00">A</span>
+       <span style="color:#00FF00">I</span>
+       <span style="color:#00FFFF">N</span>
+       <span style="color:#0000FF">B</span>
+       <span style="color:#FF00FF">O</span>
+       <span style="color:#FF0000">W</span>'
+    , p_style => style1
+    );
+
+    ExcelGen.putRichTextCell(
+      p_ctxId   => ctx
+    , p_sheetId => sheet7
+    , p_rowIdx  => 2
+    , p_colIdx  => 1
+    , p_value   => 
+      'The chemical formula of glucose is <span style="color:blue;font-weight:bold">'||regexp_replace('C6H12O6','(\d+)','<sub>\1</sub>')||'</span>'
+    );
+    
+    ExcelGen.setColumnProperties(ctx, sheet7, 1, p_width => ExcelGen.colPxToCharWidth(128));
+    ExcelGen.setRowProperties(ctx, sheet7, 1, p_height => 30);    
+  end;
+
 begin
 
   ctx := ExcelGen.createContext(ExcelGen.FILE_XLSX);
@@ -356,6 +389,7 @@ begin
   makeAlignmentSheet;
   makeColorSheet;
   makeGradientSheet;
+  makeRichTextSheet;
 
   ExcelGen.createFile(ctx, 'TEST_DIR', 'style-showcase.xlsx');
   ExcelGen.closeContext(ctx);

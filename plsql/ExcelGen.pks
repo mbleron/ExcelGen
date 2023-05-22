@@ -52,6 +52,7 @@ create or replace package ExcelGen is
     Lee Lindley,
     Marc Bleron       2023-02-03     Added getRowCount function
     Marc Bleron       2023-02-14     Added p_headerStyle to setTableColumnProperties
+    Marc Bleron       2023-02-15     Added Rich Text support
 ====================================================================================== */
 
   -- file types
@@ -120,12 +121,13 @@ create or replace package ExcelGen is
   return CT_Border;
 
   function makeFont (
-    p_name   in varchar2 default null
-  , p_sz     in pls_integer default null
-  , p_b      in boolean default false
-  , p_i      in boolean default false
-  , p_color  in varchar2 default null
-  , p_u      in varchar2 default null
+    p_name       in varchar2 default null
+  , p_sz         in pls_integer default null
+  , p_b          in boolean default false
+  , p_i          in boolean default false
+  , p_color      in varchar2 default null
+  , p_u          in varchar2 default null
+  , p_vertAlign  in varchar2 default null
   )
   return CT_Font;
 
@@ -305,6 +307,17 @@ create or replace package ExcelGen is
   , p_rowIdx          in pls_integer
   , p_colIdx          in pls_integer
   , p_value           in date
+  , p_style           in cellStyleHandle default null 
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  );
+
+  procedure putRichTextCell (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowIdx          in pls_integer
+  , p_colIdx          in pls_integer
+  , p_value           in varchar2
   , p_style           in cellStyleHandle default null 
   , p_anchorTableId   in tableHandle default null
   , p_anchorPosition  in pls_integer default null
