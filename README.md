@@ -2052,6 +2052,10 @@ Shows available cell styling options.
 
 ## CHANGELOG
 
+### 3.4 (2023-05-22)
+
+* Added Rich Text support
+
 ### 3.3 (2023-02-14)
 
 * Enhancement : issue #45
