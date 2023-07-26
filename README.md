@@ -196,13 +196,27 @@ For example, if one adds sheet 'A' at index 2, sheet 'B' at index 4 and sheet 'C
 ---
 ### addTable function
 This function adds a new table to a given sheet, and returns a handle to be used in related subprograms.  
-The table may be based on a SQL query string or a weakly-typed ref cursor.  
+The table may be based on a SQL query string (VARCHAR2 or CLOB) or a weakly-typed ref cursor.  
 
 ```sql
 function addTable (
   p_ctxId            in ctxHandle
 , p_sheetId          in sheetHandle
 , p_query            in varchar2
+, p_paginate         in boolean default false
+, p_pageSize         in pls_integer default null
+, p_anchorRowOffset  in pls_integer default null
+, p_anchorColOffset  in pls_integer default null
+, p_anchorTableId    in tableHandle default null
+, p_anchorPosition   in pls_integer default null
+)
+return tableHandle;
+```
+```sql
+function addTable (
+  p_ctxId            in ctxHandle
+, p_sheetId          in sheetHandle
+, p_query            in clob
 , p_paginate         in boolean default false
 , p_pageSize         in pls_integer default null
 , p_anchorRowOffset  in pls_integer default null
@@ -231,7 +245,7 @@ Parameter|Description|Mandatory
 ---|---|---
 `p_ctxId`|Context handle.|Yes
 `p_sheetId`|Sheet handle.|Yes
-`p_query`|SQL query string. <br/>Bind variables (if any) can be set via [setBindVariable](#setbindvariable-procedure) procedure.|Yes
+`p_query`|SQL query string (VARCHAR2 or CLOB data type). <br/>Bind variables (if any) can be set via [setBindVariable](#setbindvariable-procedure) procedure.|Yes
 `p_rc`|Input ref cursor.|Yes
 `p_paginate`|Enables pagination of the input data source over multiple sheets. <br/>Use `p_pageSize` parameter to control the maximum number of rows per sheet.|No
 `p_pageSize`|Maximum number of rows per sheet, when pagination is enabled. <br/>If set to NULL, Excel sheet limit is used (1,048,576 rows).|No
@@ -370,7 +384,7 @@ See [Style specifications/Rich Text](#rich-text) for more information about the 
 
 ---
 ### addSheetFromQuery procedure and function
-Adds a new sheet based on a SQL query string, with optional pagination.  
+Adds a new sheet based on a SQL query string (VARCHAR2 or CLOB), with optional pagination.  
 Available both as a procedure and a function.  
 The function returns a sheetHandle value to be used with related subprograms.    
 
@@ -386,10 +400,33 @@ procedure addSheetFromQuery (
 );
 ```
 ```sql
+procedure addSheetFromQuery (
+  p_ctxId       in ctxHandle
+, p_sheetName   in varchar2
+, p_query       in clob
+, p_tabColor    in varchar2 default null
+, p_paginate    in boolean default false
+, p_pageSize    in pls_integer default null
+, p_sheetIndex  in pls_integer default null
+);
+```
+```sql
 function addSheetFromQuery (
   p_ctxId       in ctxHandle
 , p_sheetName   in varchar2
 , p_query       in varchar2
+, p_tabColor    in varchar2 default null
+, p_paginate    in boolean default false
+, p_pageSize    in pls_integer default null
+, p_sheetIndex  in pls_integer default null
+)
+return sheetHandle;
+```
+```sql
+function addSheetFromQuery (
+  p_ctxId       in ctxHandle
+, p_sheetName   in varchar2
+, p_query       in clob
 , p_tabColor    in varchar2 default null
 , p_paginate    in boolean default false
 , p_pageSize    in pls_integer default null
@@ -2051,6 +2088,10 @@ Shows available cell styling options.
 [style-showcase.sql](./test_cases/style-showcase.sql) &#8594; [style-showcase.xlsx](./samples/style-showcase.xlsx)
 
 ## CHANGELOG
+
+### 3.5 (2023-07-26)
+
+* Added CLOB query support
 
 ### 3.4 (2023-05-22)
 
