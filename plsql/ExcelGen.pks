@@ -53,6 +53,7 @@ create or replace package ExcelGen is
     Marc Bleron       2023-02-03     Added getRowCount function
     Marc Bleron       2023-02-14     Added p_headerStyle to setTableColumnProperties
     Marc Bleron       2023-02-15     Added Rich Text support
+    Marc Bleron       2023-07-26     Added CLOB query string support
 ====================================================================================== */
 
   -- file types
@@ -215,11 +216,34 @@ create or replace package ExcelGen is
   , p_sheetIndex  in pls_integer default null
   , p_excludeCols in varchar2 default null
   );
+
+  procedure addSheetFromQuery (
+    p_ctxId       in ctxHandle
+  , p_sheetName   in varchar2
+  , p_query       in clob
+  , p_tabColor    in varchar2 default null
+  , p_paginate    in boolean default false
+  , p_pageSize    in pls_integer default null
+  , p_sheetIndex  in pls_integer default null
+  , p_excludeCols in varchar2 default null
+  );
   
   function addSheetFromQuery (
     p_ctxId       in ctxHandle
   , p_sheetName   in varchar2
   , p_query       in varchar2
+  , p_tabColor    in varchar2 default null
+  , p_paginate    in boolean default false
+  , p_pageSize    in pls_integer default null
+  , p_sheetIndex  in pls_integer default null
+  , p_excludeCols in varchar2 default null
+  )
+  return sheetHandle;
+
+  function addSheetFromQuery (
+    p_ctxId       in ctxHandle
+  , p_sheetName   in varchar2
+  , p_query       in clob
   , p_tabColor    in varchar2 default null
   , p_paginate    in boolean default false
   , p_pageSize    in pls_integer default null
@@ -255,6 +279,20 @@ create or replace package ExcelGen is
     p_ctxId            in ctxHandle
   , p_sheetId          in sheetHandle
   , p_query            in varchar2
+  , p_paginate         in boolean default false
+  , p_pageSize         in pls_integer default null
+  , p_anchorRowOffset  in pls_integer default null
+  , p_anchorColOffset  in pls_integer default null
+  , p_anchorTableId    in tableHandle default null
+  , p_anchorPosition   in pls_integer default null
+  , p_excludeCols      in varchar2 default null
+  )
+  return tableHandle;
+
+  function addTable (
+    p_ctxId            in ctxHandle
+  , p_sheetId          in sheetHandle
+  , p_query            in clob
   , p_paginate         in boolean default false
   , p_pageSize         in pls_integer default null
   , p_anchorRowOffset  in pls_integer default null

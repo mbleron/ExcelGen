@@ -271,7 +271,7 @@ create or replace package body ExcelGen is
   type bind_variable_list_t is table of bind_variable_t;
   
   type sql_metadata_t is record (
-    queryString       varchar2(32767)
+    queryString       clob
   , cursorNumber      integer
   , bindVariables     bind_variable_list_t
   , columnList        column_list_t
@@ -1706,7 +1706,7 @@ create or replace package body ExcelGen is
   end;
 
   function getCursorNumber (
-    p_query in varchar2 
+    p_query in clob
   )
   return integer
   is
@@ -4200,7 +4200,7 @@ create or replace package body ExcelGen is
 
   function putTableImpl (
     sd             in out nocopy sheet_definition_t
-  , p_query        in varchar2
+  , p_query        in clob
   , p_rc           in sys_refcursor
   , p_paginate     in boolean default false
   , p_pageSize     in pls_integer default null
@@ -4226,7 +4226,6 @@ create or replace package body ExcelGen is
       t.sqlMetadata.cursorNumber := dbms_sql.to_cursor_number(local_rc);
     end if;
     
-    --t.anchorRef := parseRangeExpr(nvl(p_anchorRef,'A1')).start_ref;
     t.anchorRef := p_anchorRef;
     if t.anchorRef.rowOffset is null then
       t.anchorRef.rowOffset := 1;
@@ -4301,7 +4300,7 @@ create or replace package body ExcelGen is
   procedure addSheetFromQuery (
     p_ctxId       in ctxHandle
   , p_sheetName   in varchar2
-  , p_query       in varchar2
+  , p_query       in clob
   , p_tabColor    in varchar2 default null
   , p_paginate    in boolean default false
   , p_pageSize    in pls_integer default null
@@ -4312,6 +4311,48 @@ create or replace package body ExcelGen is
     sheetId  sheetHandle;
   begin
     sheetId := addSheetFromQuery(p_ctxId, p_sheetName, p_query, p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_excludeCols);
+  end;
+
+  procedure addSheetFromQuery (
+    p_ctxId       in ctxHandle
+  , p_sheetName   in varchar2
+  , p_query       in varchar2
+  , p_tabColor    in varchar2 default null
+  , p_paginate    in boolean default false
+  , p_pageSize    in pls_integer default null
+  , p_sheetIndex  in pls_integer default null
+  , p_excludeCols in varchar2 default null
+  )
+  is
+  begin
+    addSheetFromQuery(p_ctxId, p_sheetName, to_clob(p_query), p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_excludeCols);
+  end;
+
+  function addSheetFromQuery (
+    p_ctxId       in ctxHandle
+  , p_sheetName   in varchar2
+  , p_query       in clob
+  , p_tabColor    in varchar2 default null
+  , p_paginate    in boolean default false
+  , p_pageSize    in pls_integer default null
+  , p_sheetIndex  in pls_integer default null
+  , p_excludeCols in varchar2 default null
+  )
+  return sheetHandle
+  is
+    sheetId  sheetHandle;
+    tableId  tableHandle;
+  begin
+    loadContext(p_ctxId);
+    if p_query is null or dbms_lob.getlength(p_query) = 0 then
+      error('Query string argument is null or empty');
+    else
+      sheetId := addSheetImpl(currentCtx, p_sheetName, p_tabColor, p_sheetIndex);
+    end if;
+    
+    tableId := putTableImpl(currentCtx.sheetDefinitionMap(sheetId), p_query, null, p_paginate, p_pageSize, null, p_excludeCols);
+    
+    return sheetId;
   end;
 
   function addSheetFromQuery (
@@ -4326,19 +4367,8 @@ create or replace package body ExcelGen is
   )
   return sheetHandle
   is
-    sheetId  sheetHandle;
-    tableId  tableHandle;
   begin
-    loadContext(p_ctxId);
-    if p_query is null then
-      error('Query string argument cannot be null');
-    else
-      sheetId := addSheetImpl(currentCtx, p_sheetName, p_tabColor, p_sheetIndex);
-    end if;
-    
-    tableId := putTableImpl(currentCtx.sheetDefinitionMap(sheetId), p_query, null, p_paginate, p_pageSize, null, p_excludeCols);
-    
-    return sheetId;
+    return addSheetFromQuery(p_ctxId, p_sheetName, to_clob(p_query), p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_excludeCols);
   end;
 
   procedure addSheetFromCursor (
@@ -4396,7 +4426,7 @@ create or replace package body ExcelGen is
   function addTable (
     p_ctxId            in ctxHandle
   , p_sheetId          in sheetHandle
-  , p_query            in varchar2
+  , p_query            in clob
   , p_paginate         in boolean default false
   , p_pageSize         in pls_integer default null
   , p_anchorRowOffset  in pls_integer default null
@@ -4412,6 +4442,10 @@ create or replace package body ExcelGen is
   begin
     loadContext(p_ctxId);
 
+    if p_query is null or dbms_lob.getlength(p_query) = 0 then
+      error('Query string argument is null or empty');
+    end if;
+
     if p_anchorTableId is not null then
       assertTableExists(p_sheetId, p_anchorTableId);
     else
@@ -4426,6 +4460,24 @@ create or replace package body ExcelGen is
 
     tableId := putTableImpl(currentCtx.sheetDefinitionMap(p_sheetId), p_query, null, p_paginate, p_pageSize, anchorRef, p_excludeCols);
     return tableId;
+  end;
+
+  function addTable (
+    p_ctxId            in ctxHandle
+  , p_sheetId          in sheetHandle
+  , p_query            in varchar2
+  , p_paginate         in boolean default false
+  , p_pageSize         in pls_integer default null
+  , p_anchorRowOffset  in pls_integer default null
+  , p_anchorColOffset  in pls_integer default null
+  , p_anchorTableId    in tableHandle default null
+  , p_anchorPosition   in pls_integer default null
+  , p_excludeCols      in varchar2 default null
+  )
+  return tableHandle
+  is
+  begin
+    return addTable(p_ctxId, p_sheetId, to_clob(p_query), p_paginate, p_pageSize, p_anchorRowOffset, p_anchorColOffset, p_anchorTableId, p_anchorPosition, p_excludeCols);
   end;
 
   function addTable (
