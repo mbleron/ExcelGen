@@ -1,5 +1,7 @@
 create or replace package body ExcelGen is
 
+  VERSION_NUMBER     constant varchar2(16) := '3.6.0';
+
   -- OPC part MIME types
   MT_STYLES          constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml';
   MT_WORKBOOK        constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml';
@@ -7,6 +9,7 @@ create or replace package body ExcelGen is
   MT_SHAREDSTRINGS   constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml';
   MT_TABLE           constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml';
   --MT_COMMENTS        constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml';
+  MT_CORE            constant varchar2(256) := 'application/vnd.openxmlformats-package.core-properties+xml';
   
   -- Binary MIME types
   MT_STYLES_BIN         constant varchar2(256) := 'application/vnd.ms-excel.styles';
@@ -21,6 +24,7 @@ create or replace package body ExcelGen is
   RS_SHAREDSTRINGS   constant varchar2(256) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings';
   RS_TABLE           constant varchar2(256) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/table';
   --RS_COMMENTS        constant varchar2(256) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments';
+  RS_CORE            constant varchar2(256) := 'http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties';
 
   RANGE_EMPTY_REF        constant varchar2(100) := 'Range error : empty reference';
   RANGE_INVALID_REF      constant varchar2(100) := 'Range error : invalid reference ''%s''';
@@ -271,7 +275,7 @@ create or replace package body ExcelGen is
   type bind_variable_list_t is table of bind_variable_t;
   
   type sql_metadata_t is record (
-    queryString       clob
+    queryString       clob --varchar2(32767)
   , cursorNumber      integer
   , bindVariables     bind_variable_list_t
   , columnList        column_list_t
@@ -396,6 +400,13 @@ create or replace package body ExcelGen is
   , password      varchar2(512)
   );
   
+  type coreProperties_t is record (
+    creator      varchar2(256)
+  , description  varchar2(4000)
+  , subject      varchar2(4000)
+  , title        varchar2(4000)  
+  );
+  
   type context_t is record (
     string_map           string_map_t
   , string_list          string_list_t := string_list_t()
@@ -410,6 +421,7 @@ create or replace package body ExcelGen is
   , encryptionInfo       encryption_info_t
   , fileType             pls_integer
   , rt_cache             richText_cache_t
+  , coreProperties       coreProperties_t
   );
   
   type context_cache_t is table of context_t index by pls_integer;
@@ -419,6 +431,12 @@ create or replace package body ExcelGen is
   currentCtxId   pls_integer := -1;
   
   debug_enabled  boolean := false;
+  
+  function getProductName return varchar2
+  is
+  begin
+    return 'EXCELGEN-' || VERSION_NUMBER;
+  end;
 
   procedure loadContext (ctxId in pls_integer)
   is
@@ -1706,7 +1724,7 @@ create or replace package body ExcelGen is
   end;
 
   function getCursorNumber (
-    p_query in clob
+    p_query in clob --varchar2 
   )
   return integer
   is
@@ -4200,7 +4218,7 @@ create or replace package body ExcelGen is
 
   function putTableImpl (
     sd             in out nocopy sheet_definition_t
-  , p_query        in clob
+  , p_query        in clob --varchar2
   , p_rc           in sys_refcursor
   , p_paginate     in boolean default false
   , p_pageSize     in pls_integer default null
@@ -5342,6 +5360,40 @@ $if NOT $$no_crypto OR $$no_crypto IS NULL $then
   end;
 $end
 
+  procedure setCoreProperties (
+    p_ctxId        in ctxHandle
+  , p_creator      in varchar2 default null
+  , p_description  in varchar2 default null
+  , p_subject      in varchar2 default null
+  , p_title        in varchar2 default null
+  )
+  is
+  begin
+    loadContext(p_ctxId);
+    currentCtx.coreProperties.creator := p_creator;
+    currentCtx.coreProperties.description := p_description;
+    currentCtx.coreProperties.subject := p_subject;
+    currentCtx.coreProperties.title := p_title;
+  end;
+
+  procedure createCoreProperties (
+    ctx  in out nocopy context_t 
+  )
+  is
+    stream  stream_t := new_stream();
+  begin
+    stream_write(stream, '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">');
+    stream_write(stream, '<dcterms:created xsi:type="dcterms:W3CDTF">'||to_char(systimestamp at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')||'</dcterms:created>');
+    stream_write(stream, '<dc:creator>'||dbms_xmlgen.convert(nvl(ctx.coreProperties.creator, getProductName()))||'</dc:creator>');
+    stream_write(stream, '<dc:description>'||dbms_xmlgen.convert(ctx.coreProperties.description)||'</dc:description>');
+    stream_write(stream, '<dc:subject>'||dbms_xmlgen.convert(ctx.coreProperties.subject)||'</dc:subject>');
+    stream_write(stream, '<dc:title>'||dbms_xmlgen.convert(ctx.coreProperties.title)||'</dc:title>');
+    stream_write(stream, '</cp:coreProperties>');
+    stream_flush(stream);
+    addPart(ctx, 'docProps/core.xml', MT_CORE, stream.content);
+    addRelationship(ctx, null, RS_CORE, 'docProps/core.xml');
+  end;
+
   function getFileContent (
     p_ctxId  in ctxHandle
   )
@@ -5369,6 +5421,9 @@ $end
     when FILE_XLSB then
       createWorkbookBin(currentCtx);
     end case;
+    
+    -- core properties
+    createCoreProperties(currentCtx);
     
     createContentTypes(currentCtx);
     createRels(currentCtx);

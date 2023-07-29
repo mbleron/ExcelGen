@@ -94,6 +94,8 @@ For simple requirements such as a single-table sheet, shortcut procedures and fu
   * [getFileContent](#getfilecontent-function)  
   * [createFile](#createfile-procedure)  
   * [setEncryption](#setencryption-procedure)  
+  * [getProductName](#getproductname-function)  
+  * [setCoreProperties](#setcoreproperties-procedure)
 * Sheet management  
   * [addSheet](#addsheet-function)
   * [addSheetFromQuery](#addsheetfromquery-procedure-and-function)  
@@ -1113,6 +1115,38 @@ Parameter|Description|Mandatory
 
 
 ---
+### setCoreProperties procedure
+This procedure sets various file properties (metadata) as specified by the [Dublin Core Metadata Initiative](https://www.dublincore.org/specifications/dublin-core/dcmi-terms/) (DCMI).  
+
+```sql
+procedure setCoreProperties (
+  p_ctxId        in ctxHandle
+, p_creator      in varchar2 default null
+, p_description  in varchar2 default null
+, p_subject      in varchar2 default null
+, p_title        in varchar2 default null
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_creator`|[Creator](https://www.dublincore.org/specifications/dublin-core/dcmi-terms/elements11/creator/) property. <br/>If NULL, defaults to the product name as returned by [getProductName](#getproductname-function) function.|No
+`p_description`|[Description](https://www.dublincore.org/specifications/dublin-core/dcmi-terms/elements11/description/) property.|No
+`p_subject`|[Subject](https://www.dublincore.org/specifications/dublin-core/dcmi-terms/elements11/subject/) property.|No
+`p_title`|[Title](https://www.dublincore.org/specifications/dublin-core/dcmi-terms/elements11/title/) property.|No
+
+
+---
+### getProductName function
+This function returns a string containing the current ExcelGen identifier and version number, e.g. `EXCELGEN-3.6.0`.
+
+```sql
+function getProductName
+return varchar2;
+```
+
+---
 ### getFileContent function
 This function builds the spreadsheet file and returns it as a temporary BLOB.  
 
@@ -2088,6 +2122,11 @@ Shows available cell styling options.
 [style-showcase.sql](./test_cases/style-showcase.sql) &#8594; [style-showcase.xlsx](./samples/style-showcase.xlsx)
 
 ## CHANGELOG
+
+### 3.6 (2023-07-29)
+
+* Added Dublin Core properties
+* Added getProductName function
 
 ### 3.5 (2023-07-26)
 

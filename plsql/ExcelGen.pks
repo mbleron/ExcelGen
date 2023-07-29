@@ -54,6 +54,7 @@ create or replace package ExcelGen is
     Marc Bleron       2023-02-14     Added p_headerStyle to setTableColumnProperties
     Marc Bleron       2023-02-15     Added Rich Text support
     Marc Bleron       2023-07-26     Added CLOB query string support
+    Marc Bleron       2023-07-29     Added Dublin Core properties
 ====================================================================================== */
 
   -- file types
@@ -89,6 +90,8 @@ create or replace package ExcelGen is
   
   subtype uint8 is ExcelTypes.uint8;
 
+  function getProductName return varchar2;
+  
   procedure setDebug (
     p_status in boolean
   );
@@ -651,6 +654,14 @@ $if NOT $$no_crypto OR $$no_crypto IS NULL $then
   , p_compatible  in pls_integer default OFFICE2007SP2
   );
 $end
+
+  procedure setCoreProperties (
+    p_ctxId        in ctxHandle
+  , p_creator      in varchar2 default null
+  , p_description  in varchar2 default null
+  , p_subject      in varchar2 default null
+  , p_title        in varchar2 default null
+  );
 
   function getFileContent (
     p_ctxId  in ctxHandle
