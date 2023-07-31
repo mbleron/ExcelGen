@@ -13,7 +13,7 @@ It supports encryption, cell merging, various formatting options through a built
 * [ExcelGen Subprograms and Usage](#excelgen-subprograms-and-usage)  
 * [Style specifications](#style-specifications)  
 * [Examples](#examples-3)  
-* [CHANGELOG](#changelog)  
+* [Copyright and license](#copyright-and-license)  
 
 ## What's New in...
 
@@ -21,6 +21,8 @@ It supports encryption, cell merging, various formatting options through a built
 > Version 2.0 : support for XLSB format output  
 > Version 1.0 : added encryption features  
 > Version 0.1b : Beta version
+
+([Change Log](./CHANGELOG.md))
 
 ## Bug tracker
 
@@ -2120,108 +2122,6 @@ Creates a weave pattern using cell background color and gradient pattern.
 #### Style showcase
 Shows available cell styling options.  
 [style-showcase.sql](./test_cases/style-showcase.sql) &#8594; [style-showcase.xlsx](./samples/style-showcase.xlsx)
-
-## CHANGELOG
-
-### 3.6 (2023-07-29)
-
-* Added Dublin Core properties
-* Added getProductName function
-
-### 3.5 (2023-07-26)
-
-* Added CLOB query support
-
-### 3.4 (2023-05-22)
-
-* Added Rich Text support
-
-### 3.3 (2023-02-14)
-
-* Enhancement : issue #45
-
-### 3.2 (2023-02-04)
-
-* Enhancement : issue #44
-* Fix : issue #42
-* Fix : issue #43
-
-### 3.1 (2023-01-03)
-
-* Added Range style
-* Added Gradient fill
-* Enhancement : issue #32
-* Enhancement : issue #37
-* Fix : issue #35
-* Fix : issue #39
-
-### 3.0.1 (2022-11-18)
-
-* Fix : issue #33
-
-### 3.0 (2022-11-02)
-
-* Added Cell API
-* Added Multitable sheet
-* Added Merged cells
-* Added CSS styling support
-* More table formatting options and row properties
-
-### 2.5.1 (2022-08-23)
-
-* Fix : issue #27
-
-### 2.5 (2022-02-27)
-
-* Enhancement : issue #10
-
-### 2.4.3 (2022-02-22)
-
-* add debug worksheet index number, cursor number and queryString
-* add binary_double data type
-
-### 2.4.2 (2022-02-20)
-
-* Fix : issue #18
-
-### 2.4.1 (2022-02-19)
-
-* Enhancement : issue #17
-
-### 2.4 (2022-02-16)
-
-* Enhancement : issue #7
-
-### 2.3 (2022-02-06)
-
-* Enhancement : issue #9
-* Fix : issue #15
-
-### 2.2.1 (2021-09-15)
-
-* Fix : issue #11
-* Fix : issue #12
-
-### 2.2 (2021-08-23)
-
-* Added setColumnFormat procedure
-
-### 2.1 (2021-07-25)
-
-* Added setNumFormat procedure
-
-### 2.0 (2021-05-23)
-* Support for XLSB format output
-* New dependencies : ExcelTypes and XUTL_XLSB packages
-
-### 1.1 (2021-04-30)
-* Fix : issue #1
-
-### 1.0 (2020-06-28)
-* Added encryption
-
-### 0.1b (2020-03-25)
-* Beta version
 
 
 ## Copyright and license
