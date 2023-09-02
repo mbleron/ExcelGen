@@ -13,7 +13,7 @@ It supports encryption, cell merging, various formatting options through a built
 * [ExcelGen Subprograms and Usage](#excelgen-subprograms-and-usage)  
 * [Style specifications](#style-specifications)  
 * [Examples](#examples-3)  
-* [CHANGELOG](#changelog)  
+* [Copyright and license](#copyright-and-license)  
 
 ## What's New in...
 
@@ -21,6 +21,8 @@ It supports encryption, cell merging, various formatting options through a built
 > Version 2.0 : support for XLSB format output  
 > Version 1.0 : added encryption features  
 > Version 0.1b : Beta version
+
+([Change Log](./CHANGELOG.md))
 
 ## Bug tracker
 
@@ -94,6 +96,8 @@ For simple requirements such as a single-table sheet, shortcut procedures and fu
   * [getFileContent](#getfilecontent-function)  
   * [createFile](#createfile-procedure)  
   * [setEncryption](#setencryption-procedure)  
+  * [getProductName](#getproductname-function)  
+  * [setCoreProperties](#setcoreproperties-procedure)
 * Sheet management  
   * [addSheet](#addsheet-function)
   * [addSheetFromQuery](#addsheetfromquery-procedure-and-function)  
@@ -209,6 +213,7 @@ function addTable (
 , p_anchorColOffset  in pls_integer default null
 , p_anchorTableId    in tableHandle default null
 , p_anchorPosition   in pls_integer default null
+, p_maxRows          in integer default null
 )
 return tableHandle;
 ```
@@ -223,6 +228,7 @@ function addTable (
 , p_anchorColOffset  in pls_integer default null
 , p_anchorTableId    in tableHandle default null
 , p_anchorPosition   in pls_integer default null
+, p_maxRows          in integer default null
 )
 return tableHandle;
 ```
@@ -237,6 +243,7 @@ function addTable (
 , p_anchorColOffset  in pls_integer default null
 , p_anchorTableId    in tableHandle default null
 , p_anchorPosition   in pls_integer default null
+, p_maxRows          in integer default null
 )
 return tableHandle;
 ```
@@ -253,6 +260,7 @@ Parameter|Description|Mandatory
 `p_anchorColOffset`|Column offset of the top-left cell of the table. <br/>If `p_anchorTableId` is not NULL, this offset is relative to the table position specified by `p_anchorPosition`, otherwise it is an absolute offset in the sheet.|No
 `p_anchorTableId`|Handle of the anchor table.|No
 `p_anchorPosition`|Position in the anchor table from which row and column offsets are applied. <br>One of `TOP_LEFT`, `TOP_RIGHT`, `BOTTOM_RIGHT`, `BOTTOM_LEFT`.|No
+`p_maxRows`|Maximum number of rows to fetch from the underlying query. <br/>If set to NULL, no limit is applied except Excel sheet limit (unless pagination is enabled).|No
 
 **Notes :**  
 Allowed SQL column data types are : 
@@ -397,6 +405,7 @@ procedure addSheetFromQuery (
 , p_paginate    in boolean default false
 , p_pageSize    in pls_integer default null
 , p_sheetIndex  in pls_integer default null
+, p_maxRows     in integer default null
 );
 ```
 ```sql
@@ -408,6 +417,7 @@ procedure addSheetFromQuery (
 , p_paginate    in boolean default false
 , p_pageSize    in pls_integer default null
 , p_sheetIndex  in pls_integer default null
+, p_maxRows     in integer default null
 );
 ```
 ```sql
@@ -419,6 +429,7 @@ function addSheetFromQuery (
 , p_paginate    in boolean default false
 , p_pageSize    in pls_integer default null
 , p_sheetIndex  in pls_integer default null
+, p_maxRows     in integer default null
 )
 return sheetHandle;
 ```
@@ -431,6 +442,7 @@ function addSheetFromQuery (
 , p_paginate    in boolean default false
 , p_pageSize    in pls_integer default null
 , p_sheetIndex  in pls_integer default null
+, p_maxRows     in integer default null
 )
 return sheetHandle;
 ```
@@ -444,6 +456,7 @@ Parameter|Description|Mandatory
 `p_paginate`|Cf. [addTable](#addtable-function).|No
 `p_pageSize`|Cf. [addTable](#addtable-function).|No
 `p_sheetIndex`|Cf. [addSheet](#addsheet-function).|No
+`p_maxRows`|Cf. [addTable](#addtable-function).|No
 
 ---
 ### addSheetFromCursor procedure and function
@@ -460,6 +473,7 @@ procedure addSheetFromCursor (
 , p_paginate    in boolean default false
 , p_pageSize    in pls_integer default null
 , p_sheetIndex  in pls_integer default null
+, p_maxRows     in integer default null
 );
 ```
 ```sql
@@ -471,6 +485,7 @@ function addSheetFromCursor (
 , p_paginate    in boolean default false
 , p_pageSize    in pls_integer default null
 , p_sheetIndex  in pls_integer default null
+, p_maxRows     in integer default null
 )
 return sheetHandle;
 ```
@@ -484,6 +499,7 @@ Parameter|Description|Mandatory
 `p_paginate`|Cf. [addTable](#addtable-function).|No
 `p_pageSize`|Cf. [addTable](#addtable-function).|No
 `p_sheetIndex`|Cf. [addSheet](#addsheet-function).|No
+`p_maxRows`|Cf. [addTable](#addtable-function).|No
 
 ---
 ### setBindVariable procedure
@@ -1111,6 +1127,38 @@ Parameter|Description|Mandatory
 `p_password`|Password.|Yes
 `p_compatible`|Minimum compatible Office version for encryption. <br/>One of `OFFICE2007SP1`, `OFFICE2007SP2`, `OFFICE2010`, `OFFICE2013`, `OFFICE2016`. Default is `OFFICE2007SP2`.|No
 
+
+---
+### setCoreProperties procedure
+This procedure sets various file properties (metadata) as specified by the [Dublin Core Metadata Initiative](https://www.dublincore.org/specifications/dublin-core/dcmi-terms/) (DCMI).  
+
+```sql
+procedure setCoreProperties (
+  p_ctxId        in ctxHandle
+, p_creator      in varchar2 default null
+, p_description  in varchar2 default null
+, p_subject      in varchar2 default null
+, p_title        in varchar2 default null
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_creator`|[Creator](https://www.dublincore.org/specifications/dublin-core/dcmi-terms/elements11/creator/) property. <br/>If NULL, defaults to the product name as returned by [getProductName](#getproductname-function) function.|No
+`p_description`|[Description](https://www.dublincore.org/specifications/dublin-core/dcmi-terms/elements11/description/) property.|No
+`p_subject`|[Subject](https://www.dublincore.org/specifications/dublin-core/dcmi-terms/elements11/subject/) property.|No
+`p_title`|[Title](https://www.dublincore.org/specifications/dublin-core/dcmi-terms/elements11/title/) property.|No
+
+
+---
+### getProductName function
+This function returns a string containing the current ExcelGen identifier and version number, e.g. `EXCELGEN-3.6.0`.
+
+```sql
+function getProductName
+return varchar2;
+```
 
 ---
 ### getFileContent function
@@ -2086,103 +2134,6 @@ Creates a weave pattern using cell background color and gradient pattern.
 #### Style showcase
 Shows available cell styling options.  
 [style-showcase.sql](./test_cases/style-showcase.sql) &#8594; [style-showcase.xlsx](./samples/style-showcase.xlsx)
-
-## CHANGELOG
-
-### 3.5 (2023-07-26)
-
-* Added CLOB query support
-
-### 3.4 (2023-05-22)
-
-* Added Rich Text support
-
-### 3.3 (2023-02-14)
-
-* Enhancement : issue #45
-
-### 3.2 (2023-02-04)
-
-* Enhancement : issue #44
-* Fix : issue #42
-* Fix : issue #43
-
-### 3.1 (2023-01-03)
-
-* Added Range style
-* Added Gradient fill
-* Enhancement : issue #32
-* Enhancement : issue #37
-* Fix : issue #35
-* Fix : issue #39
-
-### 3.0.1 (2022-11-18)
-
-* Fix : issue #33
-
-### 3.0 (2022-11-02)
-
-* Added Cell API
-* Added Multitable sheet
-* Added Merged cells
-* Added CSS styling support
-* More table formatting options and row properties
-
-### 2.5.1 (2022-08-23)
-
-* Fix : issue #27
-
-### 2.5 (2022-02-27)
-
-* Enhancement : issue #10
-
-### 2.4.3 (2022-02-22)
-
-* add debug worksheet index number, cursor number and queryString
-* add binary_double data type
-
-### 2.4.2 (2022-02-20)
-
-* Fix : issue #18
-
-### 2.4.1 (2022-02-19)
-
-* Enhancement : issue #17
-
-### 2.4 (2022-02-16)
-
-* Enhancement : issue #7
-
-### 2.3 (2022-02-06)
-
-* Enhancement : issue #9
-* Fix : issue #15
-
-### 2.2.1 (2021-09-15)
-
-* Fix : issue #11
-* Fix : issue #12
-
-### 2.2 (2021-08-23)
-
-* Added setColumnFormat procedure
-
-### 2.1 (2021-07-25)
-
-* Added setNumFormat procedure
-
-### 2.0 (2021-05-23)
-* Support for XLSB format output
-* New dependencies : ExcelTypes and XUTL_XLSB packages
-
-### 1.1 (2021-04-30)
-* Fix : issue #1
-
-### 1.0 (2020-06-28)
-* Added encryption
-
-### 0.1b (2020-03-25)
-* Beta version
 
 
 ## Copyright and license

@@ -54,6 +54,8 @@ create or replace package ExcelGen is
     Marc Bleron       2023-02-14     Added p_headerStyle to setTableColumnProperties
     Marc Bleron       2023-02-15     Added Rich Text support
     Marc Bleron       2023-07-26     Added CLOB query string support
+    Marc Bleron       2023-07-29     Added Dublin Core properties
+    Marc Bleron       2023-09-02     Added p_maxRows to query-related routines
 ====================================================================================== */
 
   -- file types
@@ -89,6 +91,8 @@ create or replace package ExcelGen is
   
   subtype uint8 is ExcelTypes.uint8;
 
+  function getProductName return varchar2;
+  
   procedure setDebug (
     p_status in boolean
   );
@@ -214,6 +218,7 @@ create or replace package ExcelGen is
   , p_paginate    in boolean default false
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
+  , p_maxRows     in integer default null
   , p_excludeCols in varchar2 default null
   );
 
@@ -225,6 +230,7 @@ create or replace package ExcelGen is
   , p_paginate    in boolean default false
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
+  , p_maxRows     in integer default null
   , p_excludeCols in varchar2 default null
   );
   
@@ -236,6 +242,7 @@ create or replace package ExcelGen is
   , p_paginate    in boolean default false
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
+  , p_maxRows     in integer default null
   , p_excludeCols in varchar2 default null
   )
   return sheetHandle;
@@ -248,6 +255,7 @@ create or replace package ExcelGen is
   , p_paginate    in boolean default false
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
+  , p_maxRows     in integer default null
   , p_excludeCols in varchar2 default null
   )
   return sheetHandle;
@@ -260,6 +268,7 @@ create or replace package ExcelGen is
   , p_paginate    in boolean default false
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
+  , p_maxRows     in integer default null
   , p_excludeCols in varchar2 default null
   );
 
@@ -271,6 +280,7 @@ create or replace package ExcelGen is
   , p_paginate    in boolean default false
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
+  , p_maxRows     in integer default null
   , p_excludeCols in varchar2 default null
   )
   return sheetHandle;
@@ -285,6 +295,7 @@ create or replace package ExcelGen is
   , p_anchorColOffset  in pls_integer default null
   , p_anchorTableId    in tableHandle default null
   , p_anchorPosition   in pls_integer default null
+  , p_maxRows          in integer default null
   , p_excludeCols      in varchar2 default null
   )
   return tableHandle;
@@ -299,6 +310,7 @@ create or replace package ExcelGen is
   , p_anchorColOffset  in pls_integer default null
   , p_anchorTableId    in tableHandle default null
   , p_anchorPosition   in pls_integer default null
+  , p_maxRows          in integer default null
   , p_excludeCols      in varchar2 default null
   )
   return tableHandle;
@@ -313,6 +325,7 @@ create or replace package ExcelGen is
   , p_anchorColOffset  in pls_integer default null
   , p_anchorTableId    in tableHandle default null
   , p_anchorPosition   in pls_integer default null
+  , p_maxRows          in integer default null
   , p_excludeCols      in varchar2 default null
   )
   return tableHandle;
@@ -651,6 +664,14 @@ $if NOT $$no_crypto OR $$no_crypto IS NULL $then
   , p_compatible  in pls_integer default OFFICE2007SP2
   );
 $end
+
+  procedure setCoreProperties (
+    p_ctxId        in ctxHandle
+  , p_creator      in varchar2 default null
+  , p_description  in varchar2 default null
+  , p_subject      in varchar2 default null
+  , p_title        in varchar2 default null
+  );
 
   function getFileContent (
     p_ctxId  in ctxHandle
