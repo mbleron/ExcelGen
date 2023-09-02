@@ -213,6 +213,7 @@ function addTable (
 , p_anchorColOffset  in pls_integer default null
 , p_anchorTableId    in tableHandle default null
 , p_anchorPosition   in pls_integer default null
+, p_maxRows          in integer default null
 )
 return tableHandle;
 ```
@@ -227,6 +228,7 @@ function addTable (
 , p_anchorColOffset  in pls_integer default null
 , p_anchorTableId    in tableHandle default null
 , p_anchorPosition   in pls_integer default null
+, p_maxRows          in integer default null
 )
 return tableHandle;
 ```
@@ -241,6 +243,7 @@ function addTable (
 , p_anchorColOffset  in pls_integer default null
 , p_anchorTableId    in tableHandle default null
 , p_anchorPosition   in pls_integer default null
+, p_maxRows          in integer default null
 )
 return tableHandle;
 ```
@@ -257,6 +260,7 @@ Parameter|Description|Mandatory
 `p_anchorColOffset`|Column offset of the top-left cell of the table. <br/>If `p_anchorTableId` is not NULL, this offset is relative to the table position specified by `p_anchorPosition`, otherwise it is an absolute offset in the sheet.|No
 `p_anchorTableId`|Handle of the anchor table.|No
 `p_anchorPosition`|Position in the anchor table from which row and column offsets are applied. <br>One of `TOP_LEFT`, `TOP_RIGHT`, `BOTTOM_RIGHT`, `BOTTOM_LEFT`.|No
+`p_maxRows`|Maximum number of rows to fetch from the underlying query. <br/>If set to NULL, no limit is applied except Excel sheet limit (unless pagination is enabled).|No
 
 **Notes :**  
 Allowed SQL column data types are : 
@@ -401,6 +405,7 @@ procedure addSheetFromQuery (
 , p_paginate    in boolean default false
 , p_pageSize    in pls_integer default null
 , p_sheetIndex  in pls_integer default null
+, p_maxRows     in integer default null
 );
 ```
 ```sql
@@ -412,6 +417,7 @@ procedure addSheetFromQuery (
 , p_paginate    in boolean default false
 , p_pageSize    in pls_integer default null
 , p_sheetIndex  in pls_integer default null
+, p_maxRows     in integer default null
 );
 ```
 ```sql
@@ -423,6 +429,7 @@ function addSheetFromQuery (
 , p_paginate    in boolean default false
 , p_pageSize    in pls_integer default null
 , p_sheetIndex  in pls_integer default null
+, p_maxRows     in integer default null
 )
 return sheetHandle;
 ```
@@ -435,6 +442,7 @@ function addSheetFromQuery (
 , p_paginate    in boolean default false
 , p_pageSize    in pls_integer default null
 , p_sheetIndex  in pls_integer default null
+, p_maxRows     in integer default null
 )
 return sheetHandle;
 ```
@@ -448,6 +456,7 @@ Parameter|Description|Mandatory
 `p_paginate`|Cf. [addTable](#addtable-function).|No
 `p_pageSize`|Cf. [addTable](#addtable-function).|No
 `p_sheetIndex`|Cf. [addSheet](#addsheet-function).|No
+`p_maxRows`|Cf. [addTable](#addtable-function).|No
 
 ---
 ### addSheetFromCursor procedure and function
@@ -464,6 +473,7 @@ procedure addSheetFromCursor (
 , p_paginate    in boolean default false
 , p_pageSize    in pls_integer default null
 , p_sheetIndex  in pls_integer default null
+, p_maxRows     in integer default null
 );
 ```
 ```sql
@@ -475,6 +485,7 @@ function addSheetFromCursor (
 , p_paginate    in boolean default false
 , p_pageSize    in pls_integer default null
 , p_sheetIndex  in pls_integer default null
+, p_maxRows     in integer default null
 )
 return sheetHandle;
 ```
@@ -488,6 +499,7 @@ Parameter|Description|Mandatory
 `p_paginate`|Cf. [addTable](#addtable-function).|No
 `p_pageSize`|Cf. [addTable](#addtable-function).|No
 `p_sheetIndex`|Cf. [addSheet](#addsheet-function).|No
+`p_maxRows`|Cf. [addTable](#addtable-function).|No
 
 ---
 ### setBindVariable procedure

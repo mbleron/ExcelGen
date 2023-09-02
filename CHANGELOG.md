@@ -1,11 +1,12 @@
 # Change Log
 
-## [3.6] - 2023-07-29
+## [3.6] - 2023-09-02
 
 ### Added
 
 * Dublin Core properties (subset)
 * `getProductName` function
+* row limitation parameter for query-related routines
 
 ## [3.5] - 2023-07-26
 

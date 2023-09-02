@@ -286,6 +286,7 @@ create or replace package body ExcelGen is
   , partitionSize     pls_integer
   , partitionId       pls_integer
   , r_num             pls_integer
+  , maxRows           integer
   );
   
   type table_column_t is record (
@@ -2998,6 +2999,12 @@ create or replace package body ExcelGen is
           stream_write(stream, '</row>');
         end if;
 
+        if t.sqlMetadata.r_num = t.sqlMetadata.maxRows then
+          -- force closing cursor
+          nrows := 0;
+          exit;
+        end if;
+        
         if cell.r = MAX_ROW_NUMBER then
           if not t.sqlMetadata.partitionBySize then
             -- force closing cursor
@@ -3404,6 +3411,12 @@ create or replace package body ExcelGen is
           end if;
           
         end loop;
+
+        if t.sqlMetadata.r_num = t.sqlMetadata.maxRows then
+          -- force closing cursor
+          nrows := 0;
+          exit;
+        end if;
         
         if cell.r = MAX_ROW_NUMBER then
           if not t.sqlMetadata.partitionBySize then
@@ -4218,11 +4231,12 @@ create or replace package body ExcelGen is
 
   function putTableImpl (
     sd             in out nocopy sheet_definition_t
-  , p_query        in clob --varchar2
+  , p_query        in clob
   , p_rc           in sys_refcursor
   , p_paginate     in boolean default false
   , p_pageSize     in pls_integer default null
   , p_anchorRef    in anchorRef_t default null
+  , p_maxRows      in integer default null
   , p_excludeCols  in varchar2 default null
   )
   return tableHandle
@@ -4253,6 +4267,7 @@ create or replace package body ExcelGen is
     end if;
     
     t.sqlMetadata.excludeSet := parseIntList(p_excludeCols, ',');
+    t.sqlMetadata.maxRows := p_maxRows;
     
     sd.tableList.extend;
     t.id := sd.tableList.last;
@@ -4323,12 +4338,13 @@ create or replace package body ExcelGen is
   , p_paginate    in boolean default false
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
+  , p_maxRows     in integer default null
   , p_excludeCols in varchar2 default null
   )
   is
     sheetId  sheetHandle;
   begin
-    sheetId := addSheetFromQuery(p_ctxId, p_sheetName, p_query, p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_excludeCols);
+    sheetId := addSheetFromQuery(p_ctxId, p_sheetName, p_query, p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_maxRows, p_excludeCols);
   end;
 
   procedure addSheetFromQuery (
@@ -4339,11 +4355,12 @@ create or replace package body ExcelGen is
   , p_paginate    in boolean default false
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
+  , p_maxRows     in integer default null
   , p_excludeCols in varchar2 default null
   )
   is
   begin
-    addSheetFromQuery(p_ctxId, p_sheetName, to_clob(p_query), p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_excludeCols);
+    addSheetFromQuery(p_ctxId, p_sheetName, to_clob(p_query), p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_maxRows, p_excludeCols);
   end;
 
   function addSheetFromQuery (
@@ -4354,6 +4371,7 @@ create or replace package body ExcelGen is
   , p_paginate    in boolean default false
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
+  , p_maxRows     in integer default null
   , p_excludeCols in varchar2 default null
   )
   return sheetHandle
@@ -4368,7 +4386,7 @@ create or replace package body ExcelGen is
       sheetId := addSheetImpl(currentCtx, p_sheetName, p_tabColor, p_sheetIndex);
     end if;
     
-    tableId := putTableImpl(currentCtx.sheetDefinitionMap(sheetId), p_query, null, p_paginate, p_pageSize, null, p_excludeCols);
+    tableId := putTableImpl(currentCtx.sheetDefinitionMap(sheetId), p_query, null, p_paginate, p_pageSize, null, p_maxRows, p_excludeCols);
     
     return sheetId;
   end;
@@ -4381,12 +4399,13 @@ create or replace package body ExcelGen is
   , p_paginate    in boolean default false
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
+  , p_maxRows     in integer default null
   , p_excludeCols in varchar2 default null
   )
   return sheetHandle
   is
   begin
-    return addSheetFromQuery(p_ctxId, p_sheetName, to_clob(p_query), p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_excludeCols);
+    return addSheetFromQuery(p_ctxId, p_sheetName, to_clob(p_query), p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_maxRows, p_excludeCols);
   end;
 
   procedure addSheetFromCursor (
@@ -4397,12 +4416,13 @@ create or replace package body ExcelGen is
   , p_paginate    in boolean default false
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
+  , p_maxRows     in integer default null
   , p_excludeCols in varchar2 default null
   )
   is
     sheetId  sheetHandle;
   begin
-    sheetId := addSheetFromCursor(p_ctxId, p_sheetName, p_rc, p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_excludeCols);
+    sheetId := addSheetFromCursor(p_ctxId, p_sheetName, p_rc, p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_maxRows, p_excludeCols);
   end;
 
   function addSheetFromCursor (
@@ -4413,6 +4433,7 @@ create or replace package body ExcelGen is
   , p_paginate    in boolean default false
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
+  , p_maxRows     in integer default null
   , p_excludeCols in varchar2 default null
   )
   return sheetHandle
@@ -4426,7 +4447,7 @@ create or replace package body ExcelGen is
     else
       sheetId := addSheetImpl(currentCtx, p_sheetName, p_tabColor, p_sheetIndex);
     end if;
-    tableId := putTableImpl(currentCtx.sheetDefinitionMap(sheetId), null, p_rc, p_paginate, p_pageSize, null, p_excludeCols);
+    tableId := putTableImpl(currentCtx.sheetDefinitionMap(sheetId), null, p_rc, p_paginate, p_pageSize, null, p_maxRows, p_excludeCols);
     return sheetId;
   end;
 
@@ -4444,6 +4465,25 @@ create or replace package body ExcelGen is
   function addTable (
     p_ctxId            in ctxHandle
   , p_sheetId          in sheetHandle
+  , p_query            in varchar2
+  , p_paginate         in boolean default false
+  , p_pageSize         in pls_integer default null
+  , p_anchorRowOffset  in pls_integer default null
+  , p_anchorColOffset  in pls_integer default null
+  , p_anchorTableId    in tableHandle default null
+  , p_anchorPosition   in pls_integer default null
+  , p_maxRows          in integer default null
+  , p_excludeCols      in varchar2 default null
+  )
+  return tableHandle
+  is
+  begin
+    return addTable(p_ctxId, p_sheetId, to_clob(p_query), p_paginate, p_pageSize, p_anchorRowOffset, p_anchorColOffset, p_anchorTableId, p_anchorPosition, p_maxRows, p_excludeCols);
+  end;
+
+  function addTable (
+    p_ctxId            in ctxHandle
+  , p_sheetId          in sheetHandle
   , p_query            in clob
   , p_paginate         in boolean default false
   , p_pageSize         in pls_integer default null
@@ -4451,6 +4491,7 @@ create or replace package body ExcelGen is
   , p_anchorColOffset  in pls_integer default null
   , p_anchorTableId    in tableHandle default null
   , p_anchorPosition   in pls_integer default null
+  , p_maxRows          in integer default null
   , p_excludeCols      in varchar2 default null
   )
   return tableHandle
@@ -4476,26 +4517,8 @@ create or replace package body ExcelGen is
     anchorRef.tableId := p_anchorTableId;
     anchorRef.anchorPosition := p_anchorPosition;
 
-    tableId := putTableImpl(currentCtx.sheetDefinitionMap(p_sheetId), p_query, null, p_paginate, p_pageSize, anchorRef, p_excludeCols);
+    tableId := putTableImpl(currentCtx.sheetDefinitionMap(p_sheetId), p_query, null, p_paginate, p_pageSize, anchorRef, p_maxRows, p_excludeCols);
     return tableId;
-  end;
-
-  function addTable (
-    p_ctxId            in ctxHandle
-  , p_sheetId          in sheetHandle
-  , p_query            in varchar2
-  , p_paginate         in boolean default false
-  , p_pageSize         in pls_integer default null
-  , p_anchorRowOffset  in pls_integer default null
-  , p_anchorColOffset  in pls_integer default null
-  , p_anchorTableId    in tableHandle default null
-  , p_anchorPosition   in pls_integer default null
-  , p_excludeCols      in varchar2 default null
-  )
-  return tableHandle
-  is
-  begin
-    return addTable(p_ctxId, p_sheetId, to_clob(p_query), p_paginate, p_pageSize, p_anchorRowOffset, p_anchorColOffset, p_anchorTableId, p_anchorPosition, p_excludeCols);
   end;
 
   function addTable (
@@ -4508,6 +4531,7 @@ create or replace package body ExcelGen is
   , p_anchorColOffset  in pls_integer default null
   , p_anchorTableId    in tableHandle default null
   , p_anchorPosition   in pls_integer default null
+  , p_maxRows          in integer default null
   , p_excludeCols      in varchar2 default null
   )
   return tableHandle
@@ -4529,7 +4553,7 @@ create or replace package body ExcelGen is
     anchorRef.tableId := p_anchorTableId;
     anchorRef.anchorPosition := p_anchorPosition;
     
-    tableId := putTableImpl(currentCtx.sheetDefinitionMap(p_sheetId), null, p_rc, p_paginate, p_pageSize, anchorRef, p_excludeCols);
+    tableId := putTableImpl(currentCtx.sheetDefinitionMap(p_sheetId), null, p_rc, p_paginate, p_pageSize, anchorRef, p_maxRows, p_excludeCols);
     return tableId;
   end;
 
@@ -5399,7 +5423,6 @@ $end
   )
   return blob
   is
-    --ctx         context_t := ctx_cache(p_ctxId);
     sheetIndex  pls_integer;
     output      blob;
   begin
