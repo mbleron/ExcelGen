@@ -1310,6 +1310,7 @@ function makeFont (
 , p_color      in varchar2 default null
 , p_u          in varchar2 default null
 , p_vertAlign  in varchar2 default null
+, p_strike     in boolean default false
 )
 return CT_Font;
 ```
@@ -1323,6 +1324,7 @@ Parameter|Description|Mandatory
 `p_color`|Font [color](#color-specification).|No
 `p_u`|Underline style. <br/>One of `none`, `single`, `double`, `singleAccounting`, `doubleAccounting`. Default is `none`.|No
 `p_vertAlign`|Font vertical alignment: superscript or subscript. <br/>One of `superscript`, `subscript`, or `baseline` (default).|No
+`p_strike`|Font strikethrough effect (true\|false).|No
 
 ---
 ### makePatternFill function
@@ -1404,9 +1406,12 @@ This function builds an instance of a cell alignment.
 
 ```sql
 function makeAlignment (
-  p_horizontal  in varchar2 default null
-, p_vertical    in varchar2 default null
-, p_wrapText    in boolean default false
+  p_horizontal    in varchar2 default null
+, p_vertical      in varchar2 default null
+, p_wrapText      in boolean default false
+, p_textRotation  in number default null
+, p_verticalText  in boolean default false
+, p_indent        in number default null
 )
 return CT_CellAlignment;
 ```
@@ -1416,6 +1421,12 @@ Parameter|Description|Mandatory
 `p_horizontal`|Horizontal alignment type, one of `left`, `center` or `right`.|No
 `p_vertical`|Vertical alignment type, one of `top`, `center` or `bottom`.|No
 `p_wrapText`|Cell text wrapping. Default is `false`.|No
+`p_textRotation`|Text rotation angle in degree, between -90° and 90°. <br/>Angle zero is the default horizontal text layout, negative values represent clockwise rotation.|No
+`p_verticalText`|Vertical text layout (`true`\|`false`). <br/>The text is stacked vertically instead of horizontally (the default).|No
+`p_indent`|Text indentation level in the cell, specified as an unsigned integer between 0 and 250, where one unit of indentation corresponds to 3 space characters in the default font. <br/>Indentation has an effect only when horizontal alignment is set to `left`, `right` or `distributed`.|No
+
+Note:  
+`p_textRotation` is not compatible with `p_verticalText`. If both are specified, `p_textRotation` takes precedence.
 
 ---
 ### makeCellStyle function
@@ -1592,15 +1603,18 @@ Name|Description  |Standard
 [font-style](https://developer.mozilla.org/en-US/docs/Web/CSS/font-style)|Font style. <br/>Supported values: <ins>`normal`</ins>, `italic`.|:heavy_check_mark:
 [font-weight](https://developer.mozilla.org/en-US/docs/Web/CSS/font-weight)|Font weight. <br/>Supported values: <ins>`normal`</ins>, `bold`.|:heavy_check_mark:
 [text-decoration](https://developer.mozilla.org/en-US/docs/Web/CSS/text-decoration)|`text-decoration` shorthand property.  <br/>ExcelGen only supports `text-decoration-line` and `text-decoration-style` components.|:heavy_check_mark:
-[text-decoration-line](https://developer.mozilla.org/en-US/docs/Web/CSS/text-decoration-line)|Kind of text decoration. <br/>Supported values: <ins>`none`</ins>, `underline`.|:heavy_check_mark:
-[text-decoration-style](https://developer.mozilla.org/en-US/docs/Web/CSS/text-decoration-style)|Style of the text decoration line. <br>Supported values: <ins>`solid`</ins>, `double`, *`single-accounting`*, *`double-accounting`*.|:heavy_check_mark:
-[vertical-align](https://developer.mozilla.org/en-US/docs/Web/CSS/vertical-align)|`vertical-align` property. <br/>Supported values: `top`, `middle`, `bottom`, *`justify`*, *`distributed`*, `baseline`, `sub`, `super`. <br/>Last two values `sub` and `super` map to Excel font attributes 'Subscript' and 'Superscript' respectively.|:heavy_check_mark:
+[text-decoration-line](https://developer.mozilla.org/en-US/docs/Web/CSS/text-decoration-line)|Kind of text decoration. <br/>Supported values: <ins>`none`</ins>, or at least one of `underline`, `line-through`. <br/>The value `line-through` maps to Excel font effect 'Strikethrough'.|:heavy_check_mark:
+[text-decoration-style](https://developer.mozilla.org/en-US/docs/Web/CSS/text-decoration-style)|Style of the text decoration line. <br>Supported values: <ins>`solid`</ins>, `double`, *`single-accounting`*, *`double-accounting`*. <br/>This style only applies in conjunction with `underline` decoration line value.|:heavy_check_mark:
+[vertical-align](https://developer.mozilla.org/en-US/docs/Web/CSS/vertical-align)|`vertical-align` property. <br/>Supported values: `top`, `middle`, `bottom`, *`justify`*, *`distributed`*, `baseline`, `sub`, `super`. <br/>Last two values `sub` and `super` map to Excel font effects 'Subscript' and 'Superscript' respectively.|:heavy_check_mark:
 [text-align](https://developer.mozilla.org/en-US/docs/Web/CSS/text-align)|`text-align` property. <br/>Supported values: `left`, `center`, `right`, `justify`, *`fill`*, *`center-across`*, *`distributed`*.|:heavy_check_mark:
 [white-space](https://developer.mozilla.org/en-US/docs/Web/CSS/white-space)|`white-space` property. <br/>Supported values: <ins>`pre`</ins>, `pre-wrap`. <br/>Default value is `pre`, which maps to the default "no wrap" mode for a cell.|:heavy_check_mark:
 [color](https://developer.mozilla.org/en-US/docs/Web/CSS/color)|`color` property, sets the text and text decoration color. <br/>Supported values: see [Color specification](#color-specification).|:heavy_check_mark:
 [background](https://developer.mozilla.org/en-US/docs/Web/CSS/background)|`background` shorthand property. <br/>ExcelGen only supports a single `background-color` or `background-image` component (see below).|:heavy_check_mark:
 [background-color](https://developer.mozilla.org/en-US/docs/Web/CSS/background-color)|`background-color` property, sets the background color of the cell. <br/>When the pattern type is set to `none` (the default), specifying a color via this property defines a solid fill. <br/>Supported values: see [Color specification](#color-specification).|:heavy_check_mark:
 [background-image](https://developer.mozilla.org/en-US/docs/Web/CSS/background-image)|`background-image` property. <br/>ExcelGen only supports a single gradient value specified via [linear-gradient()](https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient) function.|:heavy_check_mark:
+[rotate](https://developer.mozilla.org/en-US/docs/Web/CSS/rotate)|`rotate` property. <br/>Excel only supports a single angle value in `deg`, `turn` or `rad` unit, in the range [-90°, 90°]. <br/>Following CSS convention, a positive angle value rotates clockwise.|:heavy_check_mark:
+[text-orientation](https://developer.mozilla.org/en-US/docs/Web/CSS/text-orientation)|`text-orientation` property. <br/>The only supported value is `upright`, which maps to "Vertical Text" font property in Excel. <br/>Contrary to CSS specs, and for the sake of simplicity, this property does not require an explicit vertical [`writing-mode`](https://developer.mozilla.org/en-US/docs/Web/CSS/writing-mode) property set alongside it.|:heavy_check_mark:
+mso-char-indent-count|Text indentation level, in the range [0, 250]. <br/>See `p_indent` parameter of [makeAlignment](#makealignment-function) function for more details.|:x:
 mso-pattern|Fill pattern type. <br/>Supported values: <ins>*`none`*</ins>, *`gray-50`*, *`gray-75`*, *`gray-25`*, *`horz-stripe`*, *`vert-stripe`*, *`reverse-dark-down`*, *`diag-stripe`*, *`diag-cross`*, *`thick-diag-cross`*, *`thin-horz-stripe`*, *`thin-vert-stripe`*, *`thin-reverse-diag-stripe`*, *`thin-diag-stripe`*, *`thin-horz-cross`*, *`thin-diag-cross`*, *`gray-125`*, *`gray-0625`*. <br/><br/>See [Pattern CSS Mapping](#pattern-css-mapping) for details.|:x:
 mso-number-format|Number/Date format string. <br/>e.g. `"0.00"`, `"yyyy-mm-dd"`|:x:
 
@@ -1696,6 +1710,7 @@ Tag|Description
 --|--
 `<b></b>`|Puts text in **bold**
 `<i></i>`|Puts text in *italic*
+`<s></s>`|Strikethrough
 `<u></u>`|Underlines text with a single line
 `<span style=""></span>`|Applies [CSS](#css) provided in the style attribute
 `<sub></sub>`|Puts text in <sub>subscript</sub>
@@ -2138,4 +2153,4 @@ Shows available cell styling options.
 
 ## Copyright and license
 
-Copyright 2020-2023 Marc Bleron. Released under MIT license.
+Copyright 2020-2024 Marc Bleron. Released under MIT license.

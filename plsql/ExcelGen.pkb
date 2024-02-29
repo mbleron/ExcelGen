@@ -1,6 +1,6 @@
 create or replace package body ExcelGen is
 
-  VERSION_NUMBER     constant varchar2(16) := '3.6.0';
+  VERSION_NUMBER     constant varchar2(16) := '3.7.0';
 
   -- OPC part MIME types
   MT_STYLES          constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml';
@@ -974,11 +974,12 @@ create or replace package body ExcelGen is
   , p_color      in varchar2 default null
   , p_u          in varchar2 default null
   , p_vertAlign  in varchar2 default null
+  , p_strike     in boolean default false
   )
   return CT_Font
   is
   begin
-    return ExcelTypes.makeFont(p_name, p_sz, p_b, p_i, p_color, p_u, p_vertAlign);
+    return ExcelTypes.makeFont(p_name, p_sz, p_b, p_i, p_color, p_u, p_vertAlign, p_strike);
   end;
   
   function putFont (
@@ -1059,14 +1060,17 @@ create or replace package body ExcelGen is
   end;
 
   function makeAlignment (
-    p_horizontal  in varchar2 default null
-  , p_vertical    in varchar2 default null
-  , p_wrapText    in boolean default false
+    p_horizontal    in varchar2 default null
+  , p_vertical      in varchar2 default null
+  , p_wrapText      in boolean default false
+  , p_textRotation  in number default null
+  , p_verticalText  in boolean default false
+  , p_indent        in number default null
   )
   return CT_CellAlignment
   is
   begin
-    return ExcelTypes.makeAlignment(p_horizontal, p_vertical, p_wrapText);
+    return ExcelTypes.makeAlignment(p_horizontal, p_vertical, p_wrapText, p_textRotation, p_verticalText, p_indent);
   end;
 
   procedure setCellXfContent (
@@ -2448,17 +2452,15 @@ create or replace package body ExcelGen is
     
     -- cellStyleXfs
     xutl_xlsb.put_simple_record(stream, 626, int2raw(styles.cellStyleXfs.count));  -- BrtBeginCellStyleXFs
-    for xfId in styles.cellXfs.first .. styles.cellXfs.last loop
+    for xfId in styles.cellStyleXfs.first .. styles.cellStyleXfs.last loop
       -- BrtXF
       xutl_xlsb.put_XF(stream 
                      --, xfId       => styles.cellXfs(xfId).xfId
-                     , numFmtId   => styles.cellXfs(xfId).numFmtId
-                     , fontId     => styles.cellXfs(xfId).fontId
-                     , fillId     => styles.cellXfs(xfId).fillId
-                     , borderId   => styles.cellXfs(xfId).borderId
-                     , hAlignment => styles.cellXfs(xfId).alignment.horizontal
-                     , vAlignment => styles.cellXfs(xfId).alignment.vertical
-                     , wrapText   => styles.cellXfs(xfId).alignment.wrapText
+                     , numFmtId  => styles.cellStyleXfs(xfId).numFmtId
+                     , fontId    => styles.cellStyleXfs(xfId).fontId
+                     , fillId    => styles.cellStyleXfs(xfId).fillId
+                     , borderId  => styles.cellStyleXfs(xfId).borderId
+                     , alignment => styles.cellStyleXfs(xfId).alignment
                      );
     end loop;
     xutl_xlsb.put_simple_record(stream, 627);  -- BrtEndCellStyleXFs
@@ -2469,14 +2471,12 @@ create or replace package body ExcelGen is
       for xfId in styles.cellXfs.first .. styles.cellXfs.last loop
         -- BrtXF
         xutl_xlsb.put_XF(stream 
-                       , xfId       => styles.cellXfs(xfId).xfId
-                       , numFmtId   => styles.cellXfs(xfId).numFmtId
-                       , fontId     => styles.cellXfs(xfId).fontId
-                       , fillId     => styles.cellXfs(xfId).fillId
-                       , borderId   => styles.cellXfs(xfId).borderId
-                       , hAlignment => styles.cellXfs(xfId).alignment.horizontal
-                       , vAlignment => styles.cellXfs(xfId).alignment.vertical
-                       , wrapText   => styles.cellXfs(xfId).alignment.wrapText
+                       , xfId      => styles.cellXfs(xfId).xfId
+                       , numFmtId  => styles.cellXfs(xfId).numFmtId
+                       , fontId    => styles.cellXfs(xfId).fontId
+                       , fillId    => styles.cellXfs(xfId).fillId
+                       , borderId  => styles.cellXfs(xfId).borderId
+                       , alignment => styles.cellXfs(xfId).alignment
                        );
       end loop;
       xutl_xlsb.put_simple_record(stream, 618);  -- BrtEndCellXFs

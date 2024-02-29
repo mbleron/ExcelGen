@@ -1,5 +1,15 @@
 # Change Log
 
+## [3.7] - 2024-02-29
+
+### Added
+
+* Font strikethrough, text rotation, indent
+
+### Fixed
+
+* Issue #53
+
 ## [3.6] - 2023-09-02
 
 ### Added

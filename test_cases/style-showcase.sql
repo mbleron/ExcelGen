@@ -378,6 +378,47 @@ declare
     ExcelGen.setColumnProperties(ctx, sheet7, 1, p_width => ExcelGen.colPxToCharWidth(128));
     ExcelGen.setRowProperties(ctx, sheet7, 1, p_height => 30);    
   end;
+  
+  procedure makeOrientationSheet is
+    sheet8  ExcelGen.sheetHandle := ExcelGen.addSheet(ctx, 'Orientation');
+  begin
+    
+    -- row heights
+    ExcelGen.setRowProperties(ctx, sheet8, 1, p_height => 9);
+    for i in 2 .. 16 loop
+      ExcelGen.setRowProperties(ctx, sheet8, i, p_height => 30);
+    end loop;
+    
+    -- column widths
+    ExcelGen.setColumnProperties(ctx, sheet8, 1, p_width => 1);
+    for i in 2 .. 16 loop
+      ExcelGen.setColumnProperties(ctx, sheet8, i, p_width => 5);
+    end loop;
+    
+    -- sheet-level style
+    ExcelGen.setDefaultStyle(ctx, sheet8, ExcelGen.makeCellStyleCss(ctx, 'font-size:18pt'));
+    ExcelGen.setSheetProperties(ctx, sheet8, p_showGridLines => false, p_showRowColHeaders => false);
+    
+    -- vertical text
+    ExcelGen.putStringCell(ctx, sheet8, 2, 2, 'CLOCK');
+    ExcelGen.mergeCells(ctx, sheet8, 'B2:B16', ExcelGen.makeCellStyleCss(ctx, 'vertical-align:middle;text-align:center;text-orientation:upright;border:solid thick;background:linear-gradient(white, #18a5c2)'));
+    ExcelGen.setRangeStyle(ctx, sheet8, 'C2:Q16', ExcelGen.makeCellStyleCss(ctx, 'border:solid thick'), p_outsideBorders => true);
+    
+    -- clock digits
+    ExcelGen.putNumberCell(ctx, sheet8, 3,  10, 12);
+    ExcelGen.putNumberCell(ctx, sheet8, 4,  13, 1, ExcelGen.makeCellStyleCss(ctx, 'rotate:30deg'));
+    ExcelGen.putNumberCell(ctx, sheet8, 6,  15, 2, ExcelGen.makeCellStyleCss(ctx, 'rotate:60deg'));
+    ExcelGen.putNumberCell(ctx, sheet8, 9,  16, 3);
+    ExcelGen.putNumberCell(ctx, sheet8, 12, 15, 4, ExcelGen.makeCellStyleCss(ctx, 'rotate:-60deg'));
+    ExcelGen.putNumberCell(ctx, sheet8, 14, 13, 5, ExcelGen.makeCellStyleCss(ctx, 'rotate:-30deg'));
+    ExcelGen.putNumberCell(ctx, sheet8, 15, 10, 6);
+    ExcelGen.putNumberCell(ctx, sheet8, 14, 7,  7, ExcelGen.makeCellStyleCss(ctx, 'rotate:30deg'));
+    ExcelGen.putNumberCell(ctx, sheet8, 12, 5,  8, ExcelGen.makeCellStyleCss(ctx, 'rotate:60deg'));
+    ExcelGen.putNumberCell(ctx, sheet8, 9,  4,  9);
+    ExcelGen.putNumberCell(ctx, sheet8, 6,  5,  10, ExcelGen.makeCellStyleCss(ctx, 'rotate:-60deg'));
+    ExcelGen.putNumberCell(ctx, sheet8, 4,  7,  11, ExcelGen.makeCellStyleCss(ctx, 'rotate:-30deg'));
+  
+  end;
 
 begin
 
@@ -390,6 +431,7 @@ begin
   makeColorSheet;
   makeGradientSheet;
   makeRichTextSheet;
+  makeOrientationSheet;
 
   ExcelGen.createFile(ctx, 'TEST_DIR', 'style-showcase.xlsx');
   ExcelGen.closeContext(ctx);

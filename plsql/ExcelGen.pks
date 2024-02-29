@@ -3,7 +3,7 @@ create or replace package ExcelGen is
 
   MIT License
 
-  Copyright (c) 2020-2023 Marc Bleron
+  Copyright (c) 2020-2024 Marc Bleron
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -56,6 +56,7 @@ create or replace package ExcelGen is
     Marc Bleron       2023-07-26     Added CLOB query string support
     Marc Bleron       2023-07-29     Added Dublin Core properties
     Marc Bleron       2023-09-02     Added p_maxRows to query-related routines
+    Marc Bleron       2024-02-23     Added font strikethrough, text rotation, indent
 ====================================================================================== */
 
   -- file types
@@ -133,6 +134,7 @@ create or replace package ExcelGen is
   , p_color      in varchar2 default null
   , p_u          in varchar2 default null
   , p_vertAlign  in varchar2 default null
+  , p_strike     in boolean default false
   )
   return CT_Font;
 
@@ -162,9 +164,12 @@ create or replace package ExcelGen is
   );
 
   function makeAlignment (
-    p_horizontal  in varchar2 default null
-  , p_vertical    in varchar2 default null
-  , p_wrapText    in boolean default false
+    p_horizontal    in varchar2 default null
+  , p_vertical      in varchar2 default null
+  , p_wrapText      in boolean default false
+  , p_textRotation  in number default null
+  , p_verticalText  in boolean default false
+  , p_indent        in number default null
   )
   return CT_CellAlignment;
   
@@ -284,7 +289,7 @@ create or replace package ExcelGen is
   , p_excludeCols in varchar2 default null
   )
   return sheetHandle;
-
+  
   function addTable (
     p_ctxId            in ctxHandle
   , p_sheetId          in sheetHandle
@@ -299,7 +304,7 @@ create or replace package ExcelGen is
   , p_excludeCols      in varchar2 default null
   )
   return tableHandle;
-
+  
   function addTable (
     p_ctxId            in ctxHandle
   , p_sheetId          in sheetHandle
