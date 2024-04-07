@@ -79,7 +79,6 @@ create or replace package ExcelGen is
   subtype CT_BorderPr is ExcelTypes.CT_BorderPr;
   subtype CT_Border is ExcelTypes.CT_Border;
   subtype CT_Font is ExcelTypes.CT_Font;
-  --subtype CT_PatternFill is ExcelTypes.CT_PatternFill;
   subtype CT_GradientStop is ExcelTypes.CT_GradientStop;
   subtype CT_GradientStopList is ExcelTypes.CT_GradientStopList;
   subtype CT_Fill is ExcelTypes.CT_Fill;
@@ -334,6 +333,15 @@ create or replace package ExcelGen is
   , p_excludeCols      in varchar2 default null
   )
   return tableHandle;
+
+  procedure putDefinedName (
+    p_ctxId    in ctxHandle
+  , p_name     in varchar2
+  , p_value    in varchar2
+  , p_scope    in sheetHandle default null
+  , p_comment  in varchar2 default null
+  , p_cellRef  in varchar2 default null
+  );
 
   procedure putNumberCell (
     p_ctxId           in ctxHandle

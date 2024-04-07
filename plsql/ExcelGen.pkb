@@ -1,6 +1,6 @@
 create or replace package body ExcelGen is
 
-  VERSION_NUMBER     constant varchar2(16) := '3.7.0';
+  VERSION_NUMBER     constant varchar2(16) := '4.0.0';
 
   -- OPC part MIME types
   MT_STYLES          constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml';
@@ -120,7 +120,6 @@ create or replace package body ExcelGen is
   type string_map_t is table of pls_integer index by varchar2(32767);
   type string_t is record (value varchar2(32767), isRichText boolean := false);
   type string_list_t is table of string_t;
-  --type string_list_t is table of varchar2(32767);
   type richText_cache_t is table of ExcelTypes.CT_RichText index by pls_integer;
   
   type CT_Relationship is record (
@@ -251,20 +250,18 @@ create or replace package body ExcelGen is
   , sheetId      pls_integer
   , rId          varchar2(256)
   , partName     varchar2(256)
-  , filterRange  range_t
-  , filterXti    pls_integer
   , tableParts   CT_TableParts
   );
   
   type CT_Sheets is table of CT_Sheet;
   type CT_SheetMap is table of pls_integer index by varchar2(128);
+  --subtype CT_SheetMap is ExcelTypes.CT_SheetMap;
   
   type CT_Workbook is record (
-    sheets           CT_Sheets
-  , sheetMap         CT_SheetMap
-  , styles           CT_Stylesheet
-  , tables           CT_Tables
-  , hasDefinedNames  boolean := false
+    sheets    CT_Sheets
+  , sheetMap  CT_SheetMap
+  , styles    CT_Stylesheet
+  , tables    CT_Tables
   );
   
   type bind_variable_t is record (
@@ -275,7 +272,7 @@ create or replace package body ExcelGen is
   type bind_variable_list_t is table of bind_variable_t;
   
   type sql_metadata_t is record (
-    queryString       clob --varchar2(32767)
+    queryString       clob
   , cursorNumber      integer
   , bindVariables     bind_variable_list_t
   , columnList        column_list_t
@@ -380,6 +377,7 @@ create or replace package body ExcelGen is
   , tableList            tableList_t
   , tableForest          tableForest_t
   , data                 sheetData_t
+  , pageable             boolean := false
   , streamable           boolean
   , done                 boolean
   , hasProps             boolean
@@ -423,6 +421,8 @@ create or replace package body ExcelGen is
   , fileType             pls_integer
   , rt_cache             richText_cache_t
   , coreProperties       coreProperties_t
+  , names                ExcelTypes.CT_DefinedNames
+  , nameMap              ExcelTypes.CT_DefinedNameMap
   );
   
   type context_cache_t is table of context_t index by pls_integer;
@@ -2784,6 +2784,68 @@ create or replace package body ExcelGen is
       end loop;
     end loop;
   end;
+
+  procedure validateName (input in varchar2) is
+    tmp  varchar2(32767) := upper(input);
+  begin
+    if length(tmp) > 255 then
+      error('Defined name is too long: %s', input);
+    end if;
+    if ExcelFmla.isValidCellReference(tmp)
+      or tmp in ('R','C','RC') 
+      or regexp_like(tmp, '^C0*[1-9]')
+    then
+      error('Invalid defined name: %s', input);
+    end if;
+    tmp := regexp_substr(tmp, '^R0*([1-9]\d*)', 1, 1, null, 1);
+    if tmp is not null and length(tmp) < 8 and to_number(tmp) between 1 and MAX_ROW_NUMBER then
+      error('Invalid defined name: %s', input);
+    end if;
+  end;
+
+  procedure putNameImpl (
+    ctxId       in ctxHandle
+  , name        in varchar2
+  , value       in varchar2
+  , sheetId     in sheetHandle
+  , cellRef     in varchar2 default null
+  , comment     in varchar2 default null
+  , hidden      in boolean default false
+  , futureFunc  in boolean default false
+  , builtIn     in boolean default false
+  )
+  is
+    nameKey      varchar2(2048);
+    definedName  ExcelTypes.CT_DefinedName;
+  begin
+    loadContext(ctxId);
+    
+    if sheetId is not null then
+      definedName.scope := currentCtx.sheetDefinitionMap(sheetId).sheetName;
+    end if;
+    
+    nameKey := upper(case when definedName.scope is not null then definedName.scope || '!' end || name);
+    if currentCtx.nameMap.exists(nameKey) then
+      error('Defined name already exists: %s', name);
+    end if;
+    
+    validateName(name);
+    
+    currentCtx.names.extend;
+    definedName.idx := currentCtx.names.last;
+    definedName.name := name;
+    
+    definedName.formula := value;
+    definedName.cellRef := cellRef;
+    definedName.comment := comment;
+    definedName.hidden := nvl(hidden, false);
+    definedName.futureFunction := nvl(futureFunc, false);
+    definedName.builtIn := nvl(builtIn, false);
+    
+    currentCtx.names(definedName.idx) := definedName;
+    currentCtx.nameMap(nameKey) := definedName;
+  
+  end;
   
   procedure createWorksheetImpl (
     ctx  in out nocopy context_t
@@ -3133,8 +3195,20 @@ create or replace package body ExcelGen is
       -- if there's only one table, set sheet-level autoFilter accordingly
       if t.header.show and t.header.autoFilter then
         if not t.formatAsTable then
-          sheet.filterRange := t.range;
-          ctx.workbook.hasDefinedNames := true;
+        
+          putNameImpl(
+            ctxId   => currentCtxId
+          , name    => '_xlnm._FilterDatabase'
+          , value   => '''' || sd.sheetName || '''!' || getRangeExpr(t.range, true)
+          , sheetId => sd.sheetIndex
+          , hidden  => true
+          , builtIn => true
+          );
+          
+          ExcelFmla.putName('_xlnm._FilterDatabase', sd.sheetName);
+        
+          --sheet.filterRange := t.range;
+          --ctx.workbook.hasDefinedNames := true;
           stream_write(stream, '<autoFilter ref="'||getRangeExpr(t.range)||'"/>');
         end if;
       end if;
@@ -3173,8 +3247,8 @@ create or replace package body ExcelGen is
         error('Invalid sheet name: %s', sheet.name);
       end if;
         
-      -- check name uniqueness
-      if ctx.workbook.sheetMap.exists(sheet.name) then
+      -- check name uniqueness (case-insensitive)
+      if ctx.workbook.sheetMap.exists(upper(sheet.name)) then
         error('Duplicate sheet name: %s', sheet.name);
       end if;
         
@@ -3202,7 +3276,7 @@ create or replace package body ExcelGen is
         
       -- add sheet to workbook
       ctx.workbook.sheets(sheet.sheetId) := sheet;
-      ctx.workbook.sheetMap(sheet.name) := sheet.sheetId;
+      ctx.workbook.sheetMap(upper(sheet.name)) := sheet.sheetId;
         
       -- add sheet part to package
       addPart(ctx, part);
@@ -3543,8 +3617,21 @@ create or replace package body ExcelGen is
       -- if there's only one table, set sheet-level autoFilter accordingly
       if t.header.show and t.header.autoFilter then
         if not t.formatAsTable then
-          sheet.filterRange := t.range;
-          ctx.workbook.hasDefinedNames := true;
+
+          putNameImpl(
+            ctxId   => currentCtxId
+          , name    => '_FilterDatabase'
+          , value   => '''' || sd.sheetName || '''!' || getRangeExpr(t.range, true)
+          , sheetId => sd.sheetIndex
+          , hidden  => true
+          , builtIn => true
+          );
+          
+          -- TODO: do this in putNameImpl if hidden = true
+          ExcelFmla.putName('_FilterDatabase', sd.sheetName);
+
+          --sheet.filterRange := t.range;
+          --ctx.workbook.hasDefinedNames := true;
           xutl_xlsb.put_BeginAFilter(
             stream
           , firstRow    => t.range.start_ref.r - 1
@@ -3596,8 +3683,8 @@ create or replace package body ExcelGen is
         error('Invalid sheet name: %s', sheet.name);
       end if;
         
-      -- check name uniqueness
-      if ctx.workbook.sheetMap.exists(sheet.name) then
+      -- check name uniqueness (case-insensitive)
+      if ctx.workbook.sheetMap.exists(upper(sheet.name)) then
         error('Duplicate sheet name: %s', sheet.name);
       end if;
         
@@ -3626,7 +3713,7 @@ create or replace package body ExcelGen is
         
       -- add sheet to workbook
       ctx.workbook.sheets(sheet.sheetId) := sheet;
-      ctx.workbook.sheetMap(sheet.name) := sheet.sheetId;
+      ctx.workbook.sheetMap(upper(sheet.name)) := sheet.sheetId;
         
       -- add sheet part to package
       addPart(ctx, part);
@@ -3753,12 +3840,6 @@ create or replace package body ExcelGen is
       prepareTable(ctx, sd, sd.tableForest.roots(i));
     end loop;
     
-    for i in 1 .. sd.tableList.count loop
-      if sd.tableList(i).sqlMetadata.partitionBySize then
-        paginationCount := paginationCount + 1;
-      end if;      
-    end loop;
-    
     -- hyperlinks
     prepareHyperlinks(sd);
     
@@ -3769,7 +3850,7 @@ create or replace package body ExcelGen is
     sd.done := false;
     
     -- layout check
-    if paginationCount != 0 and not sd.streamable then
+    if sd.pageable and not sd.streamable then
       error('Cannot paginate data in a multitable or mixed-content worksheet');
     end if;
     
@@ -3896,16 +3977,34 @@ create or replace package body ExcelGen is
     
     stream_write(stream, '</sheets>');
     
-    if ctx.workbook.hasDefinedNames then
+    if ctx.names.count != 0 then
       stream_write(stream, '<definedNames>');
-      for i in 1 .. ctx.workbook.sheets.count loop
-        if ctx.workbook.sheets(i).filterRange.expr is not null then
-          stream_write(stream, '<definedName name="_xlnm._FilterDatabase" localSheetId="'||to_char(i-1)||'" hidden="1">');
-          stream_write(stream, dbms_xmlgen.convert('''' || replace(ctx.workbook.sheets(i).name, '''', '''''') || '''') || '!' || getRangeExpr(ctx.workbook.sheets(i).filterRange, true));
+      for i in 1 .. ctx.names.count loop
+        
+        if not ctx.names(i).futureFunction then
+          
+          stream_write(stream, '<definedName name="'||ctx.names(i).name||'"');
+          if ctx.names(i).comment is not null then
+            stream_write(stream, ' comment="'||dbms_xmlgen.convert(ctx.names(i).comment)||'"');
+          end if;
+          if ctx.names(i).scope is not null then
+            stream_write(stream, ' localSheetId="'||to_char(ctx.workbook.sheetMap(ctx.names(i).scope) - 1)||'"');
+          end if;
+          if ctx.names(i).hidden then
+            stream_write(stream, ' hidden="1"');
+          end if;
+          stream_write(stream, '>');
+          
+          stream_write(stream, dbms_xmlgen.convert(ExcelFmla.parse(ctx.names(i).formula)));
+          
           stream_write(stream, '</definedName>');
+        
         end if;
-      end loop;      
+        
+      end loop;
+            
       stream_write(stream, '</definedNames>');
+      
     end if;
     
     -- set calculation engine version to max value
@@ -3940,8 +4039,6 @@ create or replace package body ExcelGen is
   is
     stream  xutl_xlsb.Stream_T := xutl_xlsb.new_stream();
     part    part_t;
-    filterRange  range_t;
-    links        xutl_xlsb.SupportingLinks_T;
   begin
     part.name := 'xl/workbook.bin';
     part.contentType := null;
@@ -3950,6 +4047,7 @@ create or replace package body ExcelGen is
     xutl_xlsb.put_simple_record(stream, 131); -- BrtBeginBook
     xutl_xlsb.put_defaultBookViews(stream);
     xutl_xlsb.put_simple_record(stream, 143); -- BrtBeginBundleShs
+    xutl_xlsb.resetSheetCache;
     
     for i in 1 .. ctx.workbook.sheets.count loop
       -- add sheet relationships
@@ -3958,41 +4056,8 @@ create or replace package body ExcelGen is
     end loop;
     
     xutl_xlsb.put_simple_record(stream, 144); -- BrtEndBundleShs
-    
-    if ctx.workbook.hasDefinedNames then
       
-      xutl_xlsb.put_simple_record(stream, 353); -- BrtBeginExternals
-      xutl_xlsb.put_simple_record(stream, 357); -- BrtSupSelf
-      
-      -- generate supporting links
-      for i in 1 .. ctx.workbook.sheets.count loop
-        if ctx.workbook.sheets(i).filterRange.expr is not null then
-          ctx.workbook.sheets(i).filterXti := 
-            xutl_xlsb.add_SupportingLink(links
-                                        , 0    -- ref to BrtSupSelf record
-                                        , i-1  -- bundleSh index
-                                        );
-        end if;
-      end loop;
-      xutl_xlsb.put_ExternSheet(stream, links);  -- BrtExternSheet
-      
-      xutl_xlsb.put_simple_record(stream, 354); -- BrtEndExternals
-    
-      for i in 1 .. ctx.workbook.sheets.count loop
-        if ctx.workbook.sheets(i).filterRange.expr is not null then
-          filterRange := ctx.workbook.sheets(i).filterRange;
-          xutl_xlsb.put_FilterDatabase(stream
-                                     , bundleShIndex => i-1
-                                     , xti           => ctx.workbook.sheets(i).filterXti
-                                     , firstRow      => filterRange.start_ref.r - 1
-                                     , firstCol      => filterRange.start_ref.cn - 1
-                                     , lastRow       => filterRange.end_ref.r - 1
-                                     , lastCol       => filterRange.end_ref.cn - 1
-                                     );
-        end if;
-      end loop;
-      
-    end if;
+    xutl_xlsb.put_Names(stream, ctx.names);
     
     xutl_xlsb.put_CalcProp(stream, 999999); -- BrtCalcProp
     
@@ -4211,6 +4276,7 @@ create or replace package body ExcelGen is
     ctx.pck.parts := part_list_t();
     ctx.pck.rels := CT_Relationships();
     ctx.workbook := new_workbook();
+    ctx.names := ExcelTypes.CT_DefinedNames();
     ctx_cache(ctxId) := ctx;
     return ctxId;
   end;
@@ -4249,6 +4315,7 @@ create or replace package body ExcelGen is
     if p_paginate then
       t.sqlMetadata.partitionBySize := true;
       t.sqlMetadata.partitionSize := nvl(p_pageSize, MAX_ROW_NUMBER);
+      sd.pageable := true;
     end if;    
     
     if p_query is not null then
@@ -4285,10 +4352,7 @@ create or replace package body ExcelGen is
   return sheetHandle
   is
     sd  sheet_definition_t;
-  begin
-    sd.sheetName := p_sheetName;
-    sd.tabColor := ExcelTypes.validateColor(p_tabColor);
-    
+  begin    
     if p_sheetIndex is not null then
       if not ctx.sheetDefinitionMap.exists(p_sheetIndex) then
         sd.sheetIndex := p_sheetIndex;
@@ -4299,6 +4363,13 @@ create or replace package body ExcelGen is
       sd.sheetIndex := nvl(ctx.sheetDefinitionMap.last, 0) + 1;
     end if;
     
+    if ctx.sheetIndexMap.exists(upper(p_sheetName)) then
+       error('Duplicate sheet name: %s', p_sheetName);
+    end if;
+    
+    sd.sheetName := p_sheetName;
+    sd.tabColor := ExcelTypes.validateColor(p_tabColor);
+    
     sd.mergedCells := cellSpanList_t();
     sd.tableList := tableList_t();
     sd.data.hasCells := false;
@@ -4306,7 +4377,7 @@ create or replace package body ExcelGen is
     sd.cellRanges := cellRangeList_t();
     
     ctx.sheetDefinitionMap(sd.sheetIndex) := sd;
-    ctx.sheetIndexMap(sd.sheetName) := sd.sheetIndex;
+    ctx.sheetIndexMap(upper(sd.sheetName)) := sd.sheetIndex;
     
     return sd.sheetIndex;
     
@@ -4555,6 +4626,19 @@ create or replace package body ExcelGen is
     
     tableId := putTableImpl(currentCtx.sheetDefinitionMap(p_sheetId), null, p_rc, p_paginate, p_pageSize, anchorRef, p_maxRows, p_excludeCols);
     return tableId;
+  end;
+
+  procedure putDefinedName (
+    p_ctxId    in ctxHandle
+  , p_name     in varchar2
+  , p_value    in varchar2
+  , p_scope    in sheetHandle default null
+  , p_comment  in varchar2 default null
+  , p_cellRef  in varchar2 default null
+  )
+  is
+  begin
+    putNameImpl(p_ctxId, p_name, p_value, p_scope, p_cellRef, p_comment);
   end;
 
   procedure putCellImpl (
@@ -5423,18 +5507,45 @@ $end
   )
   return blob
   is
-    sheetIndex  pls_integer;
-    output      blob;
+    shHandle   sheetHandle;
+    shHandles  intList_t := intList_t();
+    sheet      ExcelTypes.CT_SheetBase;
+    sheets     ExcelTypes.CT_Sheets := ExcelTypes.CT_Sheets();
+    --sd         sheet_definition_t;
+    output     blob;
   begin
     loadContext(p_ctxId);
     -- shared styles
     addDefaultStyles(currentCtx.workbook.styles);
   
+    -- the following loop:
+    -- builds a collection of sheet handles
+    -- builds a collection of (sheetName, sheetIdx) tuples to be passed to the formula context
+    shHandle := currentCtx.sheetDefinitionMap.first;
+    while shHandle is not null loop
+      -- list of sheet handles
+      shHandles.extend;
+      sheet.idx := shHandles.last;
+      shHandles(sheet.idx) := shHandle;
+      -- get sheet definition
+      --sd := currentCtx.sheetDefinitionMap(shHandle);
+      
+      if not currentCtx.sheetDefinitionMap(shHandle).pageable then
+        sheet.name := currentCtx.sheetDefinitionMap(shHandle).sheetName;
+        sheets.extend;
+        sheets(sheets.last) := sheet;
+      end if;
+      
+      
+      shHandle := currentCtx.sheetDefinitionMap.next(shHandle);
+    end loop;
+    
+    -- formula context
+    ExcelFmla.setContext(sheets, currentCtx.names);
+    
     -- worksheets
-    sheetIndex := currentCtx.sheetDefinitionMap.first;
-    while sheetIndex is not null loop
-      createWorksheet(currentCtx, sheetIndex);
-      sheetIndex := currentCtx.sheetDefinitionMap.next(sheetIndex);
+    for i in 1 .. shHandles.count loop
+      createWorksheet(currentCtx, shHandles(i));
     end loop;
     
     -- workbook
