@@ -3,7 +3,7 @@
 <p align="center"><img src="./resources/banner.png"/></p>
 
 ExcelGen is a PL/SQL utility to create Excel files (.xlsx, .xlsb) out of SQL data sources (query strings or cursors), with automatic pagination over multiple sheets.  
-It supports encryption, cell merging, various formatting options through a built-in API or CSS, and table layout.
+It supports encryption, cell merging, various formatting options through a built-in API or CSS, table layout, formulas and defined names.
 
 ## Content
 * [What's New in...](#whats-new-in)  
@@ -12,11 +12,13 @@ It supports encryption, cell merging, various formatting options through a built
 * [Quick Start](#quick-start)  
 * [ExcelGen Subprograms and Usage](#excelgen-subprograms-and-usage)  
 * [Style specifications](#style-specifications)  
+* [Formula Support](#formula-support)
 * [Examples](#examples-3)  
 * [Copyright and license](#copyright-and-license)  
 
 ## What's New in...
 
+> Version 4.0 : defined names and formulas support  
 > Version 3.0 : cell API, CSS styling support, multitable sheet, merged cells  
 > Version 2.0 : support for XLSB format output  
 > Version 1.0 : added encryption features  
@@ -116,6 +118,9 @@ For simple requirements such as a single-table sheet, shortcut procedures and fu
   * [setTableColumnProperties](#settablecolumnproperties-procedure)
   * [setTableColumnFormat](#settablecolumnformat-procedure)
   * [setTableRowProperties](#settablerowproperties-procedure)
+  * [addTableColumn](#addtablecolumn-procedure)
+  * [addTableColumnBefore](#addtablecolumnbefore-procedure)
+  * [addTableColumnAfter](#addtablecolumnafter-procedure)
   * [getRowCount](#getrowcount-function)
 * Cell management
   * [putCell](#putcell-procedure)
@@ -123,8 +128,16 @@ For simple requirements such as a single-table sheet, shortcut procedures and fu
   * [putStringCell](#putstringcell-procedure)
   * [putDateCell](#putdatecell-procedure)
   * [putRichTextCell](#putrichtextcell-procedure)
+  * [putFormulaCell](#putformulacell-procedure)
   * [mergeCells](#mergecells-procedure)
   * [makeCellRef](#makecellref-function)
+* Formulas and Names  
+  * [putDefinedName](#putdefinedname-procedure)
+  * [putFormulaCell](#putformulacell-procedure)
+  * [addTableColumn](#addtablecolumn-procedure)
+  * [addTableColumnBefore](#addtablecolumnbefore-procedure)
+  * [addTableColumnAfter](#addtablecolumnafter-procedure)
+  * [setCellReferenceStyle](#setcellreferencestyle-procedure)
 * Style management
   * [setDateFormat](#setdateformat-procedure)  
   * [setTimestampFormat](#settimestampformat-procedure)  
@@ -182,6 +195,7 @@ function addSheet (
 , p_sheetName   in varchar2
 , p_tabColor    in varchar2 default null
 , p_sheetIndex  in pls_integer default null
+, p_state       in pls_integer default null
 )
 return sheetHandle;
 ```
@@ -192,10 +206,13 @@ Parameter|Description|Mandatory
 `p_sheetName`|Sheet name.|Yes
 `p_tabColor`|Tab [color](#color-specification) of the new sheet.|No
 `p_sheetIndex`|Sheet tab index in the workbook. <br/>If omitted, the sheet is added at the end of the list, after the last existing index.|No
+`p_state`|Visibility state. <br/>One of `ST_VISIBLE` (default), `ST_HIDDEN`, `ST_VERYHIDDEN`.|No
 
 **Notes :**  
 The list of sheet indices specified via `p_sheetIndex` may be sparse.  
-For example, if one adds sheet 'A' at index 2, sheet 'B' at index 4 and sheet 'C' at index 1, the resulting workbook will show sheets 'C', 'A' and 'B' in that order.
+For example, if one adds sheet 'A' at index 2, sheet 'B' at index 4 and sheet 'C' at index 1, the resulting workbook will show sheets 'C', 'A' and 'B' in that order.  
+
+The `ST_VERYHIDDEN` state is only available programmatically. It indicates that the sheet is hidden and cannot be shown in the Excel UI (contrary to `ST_HIDDEN`).  
 
 ---
 ### addTable function
@@ -391,6 +408,46 @@ The value passed to this procedure (`p_value`) must be a VARCHAR2 string contain
 See [Style specifications/Rich Text](#rich-text) for more information about the expected syntax and supported XHTML formatting elements.  
 
 ---
+### putFormulaCell procedure
+Sets a formula in a given cell.  
+See [putCell](#putcell-procedure) procedure for a description of common parameters.
+
+```sql
+procedure putFormulaCell (
+  p_ctxId           in ctxHandle
+, p_sheetId         in sheetHandle
+, p_rowIdx          in pls_integer
+, p_colIdx          in pls_integer
+, p_value           in varchar2
+, p_style           in cellStyleHandle default null 
+, p_anchorTableId   in tableHandle default null
+, p_anchorPosition  in pls_integer default null
+, p_refStyle        in pls_integer default null
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_value`|Formula string.|Yes
+`p_refStyle`|Cell reference style used in the formula. <br/>One of `ExcelFmla.REF_A1` (default) or `ExcelFmla.REF_R1C1`.|No
+
+Example:  
+
+```sql
+declare
+  ...
+  sheet1  ExcelGen.sheetHandle := ExcelGen.addSheet(ctx, 'sheet1');
+begin  
+  
+  ExcelGen.putFormulaCell(ctx, sheet1, 1, 2, 'RC[-1]+1', p_refStyle => ExcelFmla.REF_R1C1);
+  
+  ExcelGen.putFormulaCell(ctx, sheet1, 2, 2, 'SUM($A$1:$A$10)');
+  
+  ... 
+end;
+```
+
+---
 ### addSheetFromQuery procedure and function
 Adds a new sheet based on a SQL query string (VARCHAR2 or CLOB), with optional pagination.  
 Available both as a procedure and a function.  
@@ -406,6 +463,7 @@ procedure addSheetFromQuery (
 , p_pageSize    in pls_integer default null
 , p_sheetIndex  in pls_integer default null
 , p_maxRows     in integer default null
+, p_state       in pls_integer default null
 );
 ```
 ```sql
@@ -418,6 +476,7 @@ procedure addSheetFromQuery (
 , p_pageSize    in pls_integer default null
 , p_sheetIndex  in pls_integer default null
 , p_maxRows     in integer default null
+, p_state       in pls_integer default null
 );
 ```
 ```sql
@@ -430,6 +489,7 @@ function addSheetFromQuery (
 , p_pageSize    in pls_integer default null
 , p_sheetIndex  in pls_integer default null
 , p_maxRows     in integer default null
+, p_state       in pls_integer default null
 )
 return sheetHandle;
 ```
@@ -443,6 +503,7 @@ function addSheetFromQuery (
 , p_pageSize    in pls_integer default null
 , p_sheetIndex  in pls_integer default null
 , p_maxRows     in integer default null
+, p_state       in pls_integer default null
 )
 return sheetHandle;
 ```
@@ -457,6 +518,7 @@ Parameter|Description|Mandatory
 `p_pageSize`|Cf. [addTable](#addtable-function).|No
 `p_sheetIndex`|Cf. [addSheet](#addsheet-function).|No
 `p_maxRows`|Cf. [addTable](#addtable-function).|No
+`p_state`|Cf. [addSheet](#addsheet-function).|No
 
 ---
 ### addSheetFromCursor procedure and function
@@ -474,6 +536,7 @@ procedure addSheetFromCursor (
 , p_pageSize    in pls_integer default null
 , p_sheetIndex  in pls_integer default null
 , p_maxRows     in integer default null
+, p_state       in pls_integer default null
 );
 ```
 ```sql
@@ -486,6 +549,7 @@ function addSheetFromCursor (
 , p_pageSize    in pls_integer default null
 , p_sheetIndex  in pls_integer default null
 , p_maxRows     in integer default null
+, p_state       in pls_integer default null
 )
 return sheetHandle;
 ```
@@ -500,6 +564,7 @@ Parameter|Description|Mandatory
 `p_pageSize`|Cf. [addTable](#addtable-function).|No
 `p_sheetIndex`|Cf. [addSheet](#addsheet-function).|No
 `p_maxRows`|Cf. [addTable](#addtable-function).|No
+`p_state`|Cf. [addSheet](#addsheet-function).|No
 
 ---
 ### setBindVariable procedure
@@ -800,6 +865,83 @@ Parameter|Description|Mandatory
 `p_tableId`|Table handle.|Yes
 `p_rowId`|Local row index, relative to the beginning of the table.|Yes
 `p_style`|Cell style handle created via [makeCellStyle](#makecellstyle-function) or [makeCellStyleCss](#makecellstylecss-function) function.|Yes
+
+---
+### addTableColumn procedure
+This procedure adds a new calculated (formula-based) column to a given table.  
+The column is added at the end of the existing column list, see [addTableColumnBefore](#addtablecolumnbefore-procedure) and [addTableColumnAfter](#addtablecolumnafter-procedure) procedures to insert the new column at a specific position.
+
+```sql
+procedure addTableColumn (
+  p_ctxId     in ctxHandle
+, p_sheetId   in sheetHandle
+, p_tableId   in pls_integer
+, p_name      in varchar2
+, p_value     in varchar2
+, p_refStyle  in pls_integer default null
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
+`p_tableId`|Table handle.|Yes
+`p_name`|Column name.|Yes
+`p_value`|Formula string.|Yes
+`p_refStyle`|Cell reference style. <br/>Cf. [putFormulaCell](#putformulacell-procedure) procedure.|No
+
+---
+### addTableColumnBefore procedure
+This procedure adds a new calculated column to a given table, before a given column.  
+
+```sql
+procedure addTableColumnBefore (
+  p_ctxId     in ctxHandle
+, p_sheetId   in sheetHandle
+, p_tableId   in pls_integer
+, p_name      in varchar2
+, p_value     in varchar2
+, p_columnId  in pls_integer
+, p_refStyle  in pls_integer default null
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
+`p_tableId`|Table handle.|Yes
+`p_name`|Column name.|Yes
+`p_value`|Formula string.|Yes
+`p_columnId`|Column index before which to insert the new column.|Yes
+`p_refStyle`|Cell reference style.|No
+
+---
+### addTableColumnAfter procedure
+This procedure adds a new calculated column to a given table, after a given column.  
+
+```sql
+procedure addTableColumnAfter (
+  p_ctxId     in ctxHandle
+, p_sheetId   in sheetHandle
+, p_tableId   in pls_integer
+, p_name      in varchar2
+, p_value     in varchar2
+, p_columnId  in pls_integer
+, p_refStyle  in pls_integer default null
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
+`p_tableId`|Table handle.|Yes
+`p_name`|Column name.|Yes
+`p_value`|Formula string.|Yes
+`p_columnId`|Column index after which to insert the new column.|Yes
+`p_refStyle`|Cell reference style.|No
 
 ---
 ### setDateFormat procedure
@@ -1518,6 +1660,75 @@ begin
   ...
 ```
 
+---
+### putDefinedName procedure
+This procedure defines a workbook or sheet-level defined name.
+
+```sql
+procedure putDefinedName (
+  p_ctxId     in ctxHandle
+, p_name      in varchar2
+, p_value     in varchar2
+, p_scope     in sheetHandle default null
+, p_comment   in varchar2 default null
+, p_cellRef   in varchar2 default null
+, p_refStyle  in pls_integer default null
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_name`|Name of this defined name.|Yes
+`p_value`|Reference (formula string) for the name.|Yes
+`p_scope`|Scope of this name, either a `sheetHandle` for a sheet-level name, or `NULL` (the default) for global workbook level.|No
+`p_comment`|Comment for this name.|No
+`p_cellRef`|Optional point of origin (cell reference) to resolve offsets when the name uses relative cell references. Default is `A1`. See example below.|No
+`p_refStyle`|Cell reference style used in the formula. <br/>One of `ExcelFmla.REF_A1` (default) or `ExcelFmla.REF_R1C1`.|No
+
+Examples:  
+
+```sql
+declare
+  ...
+  sheet1  ExcelGen.sheetHandle := ExcelGen.addSheet(ctx, 'sheet1');
+  sheet2  ExcelGen.sheetHandle := ExcelGen.addSheet(ctx, 'sheet2');
+begin  
+  
+  ExcelGen.putDefinedName(ctx, 'TEST1', 'sheet2!$A$1', p_comment => 'This is a workbook-level name');
+  ExcelGen.putDefinedName(ctx, 'TEST2', 'sheet1!$A$1', sheet1);
+  ExcelGen.putDefinedName(ctx, 'TEST3', 'sheet1!$A$1', sheet2);
+  ExcelGen.putDefinedName(ctx, 'TEST3', 'SUM(sheet1!$A$2:$B$6)');
+  ExcelGen.putDefinedName(ctx, 'TEST4', 'CSC(1)');
+  ExcelGen.putDefinedName(ctx, 'TEST5', 'TEST4 + 1');
+  ExcelGen.putDefinedName(ctx, 'TEST6', 'sheet2:sheet1!$A$1');
+  ExcelGen.putDefinedName(ctx, 'TEST7', 'INDIRECT("$A$1")');
+  ExcelGen.putDefinedName(ctx, 'TEST8', 'sheet1!C3', sheet1, p_cellRef => 'B2');
+  
+  ... 
+end;
+```
+
+In the example above, `TEST8` refers to the relative cell reference `C3`. Internally, Excel saves it as row and column offsets, so that the actual reference changes depending on the cell the name is used. That's why ExcelGen needs a point of origin to compute those offsets in the first place.  
+Here, if `B2` is used as origin, `C3` defines an offset of one row down and one column to the right.
+
+---
+### setCellReferenceStyle procedure
+This procedure sets the cell reference style used to display formula expressions in the Excel UI, which is A1-style by default.  
+This setting does **not** control the default reference style used to parse formula via [putDefinedName](#putdefinedname-procedure), [addTableColumn](#addtablecolumn-procedure) or [putFormulaCell](#putformulacell-procedure) procedures.
+
+```sql
+procedure putDefinedName (
+  p_ctxId     in ctxHandle
+, p_refStyle  in pls_integer
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_refStyle`|Cell reference style, one of `ExcelFmla.REF_A1` or `ExcelFmla.REF_R1C1`.|No
+
 ## Style specifications
 
 ### CSS
@@ -1856,6 +2067,34 @@ For instance, the following piece of code sets the horizontal alignment for colu
   Since the style declared for column #2 does not set the background color component, it inherits the sheet-level value, and since column-level value takes precedence, cell at B2 will have a violet background:  
 ![style-inheritance](./resources/style-inheritance.png)
 
+## Formula Support
+
+ExcelGen supports the following formula-related features for both XLSX and XLSB formats:
+* Single-cell formulas
+  * [putFormulaCell](#putformulacell-procedure)
+* Shared formulas (in tables)
+  * [addTableColumn](#addtablecolumn-procedure)
+  * [addTableColumnBefore](#addtablecolumnbefore-procedure)
+  * [addTableColumnAfter](#addtablecolumnafter-procedure)
+* Defined names
+  * [putDefinedName](#putdefinedname-procedure)
+* A1 and R1C1 reference styles
+
+What is **not** supported (yet):  
+* Legacy and [dynamic array formulas](https://support.microsoft.com/en-us/office/dynamic-array-formulas-and-spilled-array-behavior-205c6b06-03ba-4151-89a1-87a7eb36e531)  
+* [Structured references](https://support.microsoft.com/en-us/office/using-structured-references-with-excel-tables-f5ed2452-2337-4f71-bed3-c8ae6d2b276e)
+
+Formulas must be entered in English locale, specifically:
+* Decimal separator = `.` (dot)
+* Argument separator, union operator, array row-item separator = `,` (comma)
+* Array row separator = `;` (semicolon)
+* English function names
+
+### Supported Excel functions  
+
+The list of supported functions is available [here](./ExcelCommons/resources/excel-functions.csv).
+
+
 ## Examples
 
 * [Single query to sheet mapping, with header formatting](#single-query-to-sheet-mapping-with-header-formatting)
@@ -1870,6 +2109,7 @@ For instance, the following piece of code sets the horizontal alignment for colu
 * [Variant column data type](#variant-column-data-type)
 * [Color spectrum demo](#color-spectrum-demo)
 * [Style showcase](#style-showcase)
+* [Formulas and Names](#formulas-and-names)
 
 #### Single query to sheet mapping, with header formatting
 [employees.sql](./test_cases/employees.sql) &#8594; [employees.xlsx](./samples/employees.xlsx)
@@ -2149,6 +2389,39 @@ Creates a weave pattern using cell background color and gradient pattern.
 #### Style showcase
 Shows available cell styling options.  
 [style-showcase.sql](./test_cases/style-showcase.sql) &#8594; [style-showcase.xlsx](./samples/style-showcase.xlsx)
+
+#### Formulas and Names
+[test-formula.xlsx](./samples/test-formula.xlsx)
+```
+declare
+
+  ctx     ExcelGen.ctxHandle := ExcelGen.createContext(ExcelGen.FILE_XLSX);
+  sheet1  ExcelGen.sheetHandle := ExcelGen.addSheet(ctx, 'sheet1');
+  table1  ExcelGen.tableHandle := ExcelGen.addTable(ctx, sheet1, 'select level as "col1" from dual connect by level <= 5');
+  
+begin
+  ExcelGen.setTableHeader(ctx, sheet1, table1, p_style => ExcelGen.makeCellStyleCss(ctx, 'font-weight:bold;color:blue'));
+  
+  -- adding a defined name
+  ExcelGen.putDefinedName(ctx, 'TEST1', 'SUM(RC[-1]:R[1]C[-1])', p_scope => sheet1, p_refStyle => ExcelFmla.REF_R1C1);
+  
+  -- adding a calculated column to table1
+  ExcelGen.addTableColumn(ctx, sheet1, table1, 'col2', '2*A2+1');
+  
+  -- adding another calculated column, based on the defined name
+  ExcelGen.addTableColumn(ctx, sheet1, table1, 'col3', 'TEST1');
+  
+  -- adding a single-cell, relatively positioned formula
+  ExcelGen.putFormulaCell(ctx, sheet1, 1, 0, '"Total=" & SUM(R2C:R[-1]C)', p_anchorTableId => table1, p_anchorPosition => ExcelGen.BOTTOM_RIGHT, p_refStyle => ExcelFmla.REF_R1C1);
+  
+  -- uncomment this to have the resulting workbook use R1C1 cell-reference style:
+  --ExcelGen.setCellReferenceStyle(ctx, ExcelFmla.REF_R1C1);
+  
+  ExcelGen.createFile(ctx, 'TEST_DIR', 'test-formula.xlsx');
+  ExcelGen.closeContext(ctx); 
+end;
+/
+```
 
 
 ## Copyright and license

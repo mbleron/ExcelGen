@@ -57,11 +57,17 @@ create or replace package ExcelGen is
     Marc Bleron       2023-07-29     Added Dublin Core properties
     Marc Bleron       2023-09-02     Added p_maxRows to query-related routines
     Marc Bleron       2024-02-23     Added font strikethrough, text rotation, indent
+    Marc Bleron       2024-05-10     Added sheet state, formula support
 ====================================================================================== */
 
   -- file types
   FILE_XLSX       constant pls_integer := 0;
   FILE_XLSB       constant pls_integer := 1;
+  
+  -- sheet visibility state
+  ST_VISIBLE      constant pls_integer := 0;
+  ST_HIDDEN       constant pls_integer := 1;
+  ST_VERYHIDDEN   constant pls_integer := 2;
 
   -- compatible versions for encryption
   OFFICE2007SP1   constant pls_integer := 0;
@@ -211,6 +217,7 @@ create or replace package ExcelGen is
   , p_sheetName   in varchar2
   , p_tabColor    in varchar2 default null
   , p_sheetIndex  in pls_integer default null
+  , p_state       in pls_integer default null
   )
   return sheetHandle;
 
@@ -223,6 +230,7 @@ create or replace package ExcelGen is
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
   , p_maxRows     in integer default null
+  , p_state       in pls_integer default null
   , p_excludeCols in varchar2 default null
   );
 
@@ -235,6 +243,7 @@ create or replace package ExcelGen is
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
   , p_maxRows     in integer default null
+  , p_state       in pls_integer default null
   , p_excludeCols in varchar2 default null
   );
   
@@ -247,6 +256,7 @@ create or replace package ExcelGen is
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
   , p_maxRows     in integer default null
+  , p_state       in pls_integer default null
   , p_excludeCols in varchar2 default null
   )
   return sheetHandle;
@@ -260,6 +270,7 @@ create or replace package ExcelGen is
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
   , p_maxRows     in integer default null
+  , p_state       in pls_integer default null
   , p_excludeCols in varchar2 default null
   )
   return sheetHandle;
@@ -273,6 +284,7 @@ create or replace package ExcelGen is
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
   , p_maxRows     in integer default null
+  , p_state       in pls_integer default null
   , p_excludeCols in varchar2 default null
   );
 
@@ -285,6 +297,7 @@ create or replace package ExcelGen is
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
   , p_maxRows     in integer default null
+  , p_state       in pls_integer default null
   , p_excludeCols in varchar2 default null
   )
   return sheetHandle;
@@ -334,13 +347,43 @@ create or replace package ExcelGen is
   )
   return tableHandle;
 
+  procedure addTableColumn (
+    p_ctxId     in ctxHandle
+  , p_sheetId   in sheetHandle
+  , p_tableId   in tableHandle
+  , p_name      in varchar2
+  , p_value     in varchar2
+  , p_refStyle  in pls_integer default null
+  );
+  
+  procedure addTableColumnBefore (
+    p_ctxId     in ctxHandle
+  , p_sheetId   in sheetHandle
+  , p_tableId   in tableHandle
+  , p_name      in varchar2
+  , p_value     in varchar2
+  , p_columnId  in pls_integer
+  , p_refStyle  in pls_integer default null
+  );
+
+  procedure addTableColumnAfter (
+    p_ctxId     in ctxHandle
+  , p_sheetId   in sheetHandle
+  , p_tableId   in tableHandle
+  , p_name      in varchar2
+  , p_value     in varchar2
+  , p_columnId  in pls_integer
+  , p_refStyle  in pls_integer default null
+  );
+
   procedure putDefinedName (
-    p_ctxId    in ctxHandle
-  , p_name     in varchar2
-  , p_value    in varchar2
-  , p_scope    in sheetHandle default null
-  , p_comment  in varchar2 default null
-  , p_cellRef  in varchar2 default null
+    p_ctxId     in ctxHandle
+  , p_name      in varchar2
+  , p_value     in varchar2
+  , p_scope     in sheetHandle default null
+  , p_comment   in varchar2 default null
+  , p_cellRef   in varchar2 default null
+  , p_refStyle  in pls_integer default null
   );
 
   procedure putNumberCell (
@@ -385,6 +428,18 @@ create or replace package ExcelGen is
   , p_style           in cellStyleHandle default null 
   , p_anchorTableId   in tableHandle default null
   , p_anchorPosition  in pls_integer default null
+  );
+
+  procedure putFormulaCell (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowIdx          in pls_integer
+  , p_colIdx          in pls_integer
+  , p_value           in varchar2
+  , p_style           in cellStyleHandle default null 
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  , p_refStyle        in pls_integer default null
   );
 
   procedure putCell (
@@ -677,6 +732,11 @@ $if NOT $$no_crypto OR $$no_crypto IS NULL $then
   , p_compatible  in pls_integer default OFFICE2007SP2
   );
 $end
+
+  procedure setCellReferenceStyle (
+    p_ctxId     in ctxHandle
+  , p_refStyle  in pls_integer
+  );
 
   procedure setCoreProperties (
     p_ctxId        in ctxHandle

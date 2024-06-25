@@ -21,6 +21,10 @@ prompt Creating package ExcelTypes ...
 @@ExcelCommons/plsql/ExcelTypes.pks
 @@ExcelCommons/plsql/ExcelTypes.pkb
 
+prompt Creating package ExcelFmla ...
+@@ExcelCommons/plsql/ExcelFmla.pks
+@@ExcelCommons/plsql/ExcelFmla.pkb
+
 prompt Creating package XUTL_XLSB ...
 @@ExcelCommons/plsql/xutl_xlsb.pks
 @@ExcelCommons/plsql/xutl_xlsb.pkb

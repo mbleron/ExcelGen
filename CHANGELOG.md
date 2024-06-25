@@ -1,5 +1,12 @@
 # Change Log
 
+## [4.0] - 2024-06-25
+
+### Added
+
+* Formulas and Names supports (#30)
+* Sheet visibility (#54)
+
 ## [3.7] - 2024-02-29
 
 ### Added
