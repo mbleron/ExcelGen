@@ -1,6 +1,66 @@
 create or replace package body ExcelGen is
+/* ======================================================================================
 
-  VERSION_NUMBER     constant varchar2(16) := '3.7.0';
+  MIT License
+
+  Copyright (c) 2020-2024 Marc Bleron
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+=========================================================================================
+    Change history :
+    Marc Bleron       2020-04-01     Creation
+    Marc Bleron       2020-05-13     Added CellAlignment style
+    Marc Bleron       2020-06-26     Added encryption
+    Marc Bleron       2021-04-29     Fixed wrong sheet order in resulting workbook
+    Marc Bleron       2021-04-29     Added optional parameter p_sheetIndex in 
+                                     addSheetFromXXX routines
+    Marc Bleron       2021-05-13     Added XLSB support
+    Lee Lindley       2021-07-25     Added setNumFormat
+    Marc Bleron       2021-08-22     Added setColumnFormat and setXXXFormat overloads
+    Marc Bleron       2021-09-15     Fixed serialization for plain NUMBER values
+                                     Fixed invalid control characters in string values
+    Marc Bleron       2021-09-04     Added wrapText attribute
+    Marc Bleron       2022-02-06     Fixed table format issue for empty dataset
+    Marc Bleron       2022-02-15     Added custom column header and width
+    Marc Bleron       2022-02-27     Added custom column style
+    Marc Bleron       2022-08-23     Fixed number format for column width (xlsx)
+    Marc Bleron       2022-09-04     Added row properties
+                                     Added multitable sheet model and cell API
+                                     Refactoring
+    Marc Bleron       2022-11-18     Renamed makeCellRef parameters
+    Marc Bleron       2022-11-19     Added gradientFill
+    Marc Bleron       2022-11-20     Fixed streamable flag in createWorksheet
+    Marc Bleron       2023-02-02     Broken style inheritance between sheet and 
+                                     descendant levels
+    Lee Lindley,
+    Marc Bleron       2023-02-03     Added getRowCount function
+    Marc Bleron       2023-02-14     Added p_headerStyle to setTableColumnProperties
+    Marc Bleron       2023-02-15     Added Rich Text support
+    Marc Bleron       2023-07-26     Added CLOB query string support
+    Marc Bleron       2023-07-29     Added Dublin Core properties
+    Marc Bleron       2023-09-02     Added p_maxRows to query-related routines
+    Marc Bleron       2024-02-23     Added font strikethrough, text rotation, indent
+    Marc Bleron       2024-05-10     Added sheet state, formula support
+====================================================================================== */
+
+  VERSION_NUMBER     constant varchar2(16) := '4.0.0';
 
   -- OPC part MIME types
   MT_STYLES          constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml';
@@ -34,7 +94,7 @@ create or replace package body ExcelGen is
   RANGE_START_ROW_ERR    constant varchar2(100) := 'Range error : start row (%d) must be lower or equal than end row (%d)';
   RANGE_START_COL_ERR    constant varchar2(100) := 'Range error : start column (''%s'') must be lower or equal than end column (''%s'')';
   RANGE_EMPTY_COL_REF    constant varchar2(100) := 'Range error : missing column reference in ''%s''';
-  RANGE_EMPTY_ROW_REF    constant varchar2(100) := 'Range error : missing row reference in ''%s'''; 
+  RANGE_EMPTY_ROW_REF    constant varchar2(100) := 'Range error : missing row reference in ''%s''';
 
   MAX_COLUMN_NUMBER      constant pls_integer := 16384;
   MAX_ROW_NUMBER         constant pls_integer := 1048576;
@@ -58,6 +118,7 @@ create or replace package body ExcelGen is
   ST_LOB                 constant pls_integer := 3;
   ST_VARIANT             constant pls_integer := 4;
   ST_RICHTEXT            constant pls_integer := 5;
+  ST_FORMULA             constant pls_integer := 6;
 
   buffer_too_small       exception;
   pragma exception_init (buffer_too_small, -19011);
@@ -99,11 +160,14 @@ create or replace package body ExcelGen is
 
   type column_ref_list_t is table of varchar2(3);
   
+  type formula_t is record (expr varchar2(32767), shared boolean, sharedIdx pls_integer, hasRef boolean, refStyle pls_integer);
+  
   type column_t is record (
     name     varchar2(128)
   , type     pls_integer
   , scale    pls_integer
   , id       pls_integer
+  , dbId     pls_integer
   , colRef   varchar2(3)
   , colNum   pls_integer
   , xfId     pls_integer := 0
@@ -111,16 +175,16 @@ create or replace package body ExcelGen is
   , link     link_t
   , supertype pls_integer
   , excluded  boolean := false
+  , fmla      formula_t
   );
     
   type column_list_t is table of column_t;
-  type column_map_t is table of pls_integer index by varchar2(128);
+  --type column_map_t is table of pls_integer index by varchar2(128);
   type column_set_t is table of varchar2(3) index by pls_integer;
 
   type string_map_t is table of pls_integer index by varchar2(32767);
   type string_t is record (value varchar2(32767), isRichText boolean := false);
   type string_list_t is table of string_t;
-  --type string_list_t is table of varchar2(32767);
   type richText_cache_t is table of ExcelTypes.CT_RichText index by pls_integer;
   
   type CT_Relationship is record (
@@ -250,21 +314,22 @@ create or replace package body ExcelGen is
     name         varchar2(128)
   , sheetId      pls_integer
   , rId          varchar2(256)
+  , state        pls_integer
   , partName     varchar2(256)
-  , filterRange  range_t
-  , filterXti    pls_integer
   , tableParts   CT_TableParts
   );
   
   type CT_Sheets is table of CT_Sheet;
   type CT_SheetMap is table of pls_integer index by varchar2(128);
+  --subtype CT_SheetMap is ExcelTypes.CT_SheetMap;
   
   type CT_Workbook is record (
-    sheets           CT_Sheets
-  , sheetMap         CT_SheetMap
-  , styles           CT_Stylesheet
-  , tables           CT_Tables
-  , hasDefinedNames  boolean := false
+    sheets      CT_Sheets
+  , sheetMap    CT_SheetMap
+  , styles      CT_Stylesheet
+  , tables      CT_Tables
+  , firstSheet  pls_integer -- first visible sheet idx
+  , refStyle    pls_integer
   );
   
   type bind_variable_t is record (
@@ -274,12 +339,25 @@ create or replace package body ExcelGen is
   
   type bind_variable_list_t is table of bind_variable_t;
   
+  type virtualColumn_t is record (
+    col    column_t
+  , pos    pls_integer
+  , after  boolean
+  );
+  
+  type virtualColumnList_t is table of virtualColumn_t;
+
+  -- doubly linked list of columns
+  type dbLinkedNode_t is record (id pls_integer, data column_t, prev pls_integer, next pls_integer);
+  type dbLinkedNodeHeap_t is table of dbLinkedNode_t index by pls_integer;
+  type dbLinkedList_t is record (first pls_integer, last pls_integer, heap dbLinkedNodeHeap_t);
+  
   type sql_metadata_t is record (
-    queryString       clob --varchar2(32767)
+    queryString       clob
   , cursorNumber      integer
   , bindVariables     bind_variable_list_t
   , columnList        column_list_t
-  , columnMap         column_map_t
+  , virtualColumns    virtualColumnList_t
   , visibleColumnSet  column_set_t
   , excludeSet        int_set_t
   , partitionBySize   boolean := false
@@ -323,7 +401,7 @@ create or replace package body ExcelGen is
   , cn    pls_integer
   , xfId  pls_integer
   , v     data_t
-  --, st    pls_integer  -- supertype
+  , f     formula_t
   , link  link_t
   , isTableCell  boolean := false
   );
@@ -335,7 +413,7 @@ create or replace package body ExcelGen is
   
   type anchorRef_t is record (tableId pls_integer, anchorPosition pls_integer, rowOffset pls_integer, colOffset pls_integer);
   
-  type floatingCell_t is record (data data_t, xfId pls_integer, anchorRef anchorRef_t);
+  type floatingCell_t is record (data data_t, xfId pls_integer, anchorRef anchorRef_t, fmla formula_t);
   type floatingCellList_t is table of floatingCell_t;
   
   type cellSpan_t is record (anchorRef anchorRef_t, rowSpan pls_integer, colSpan pls_integer);
@@ -351,7 +429,6 @@ create or replace package body ExcelGen is
   , tableStyle         varchar2(32)
   , sqlMetadata        sql_metadata_t
   , columnLinkMap      link_map_t
-  --, anchorRef          cell_ref_t
   , range              range_t
   , isEmpty            boolean
   , columnMap          table_column_map_t
@@ -360,7 +437,7 @@ create or replace package body ExcelGen is
   , showLastColumn     boolean
   , showRowStripes     boolean
   , showColumnStripes  boolean
-  , anchorRef          anchorRef_t
+  , anchorRef          anchorRef_t     
   );
   
   type tableTreeNode_t is record (nodeId pls_integer, children intList_t);
@@ -368,10 +445,14 @@ create or replace package body ExcelGen is
   type tableForest_t is record (roots intList_t, t tableTree_t);
   type tableList_t is table of table_t;
   
+  type sharedFmlaRef_t is record (columnId pls_integer, tableId pls_integer);
+  type sharedFmlaMap_t is table of sharedFmlaRef_t index by pls_integer;
+  
   type sheet_definition_t is record (
     sheetName            varchar2(128)
   , sheetIndex           pls_integer
   , tabColor             varchar2(8)
+  , state                pls_integer
   , defaultFmts          defaultFmts_t
   , defaultXfId          pls_integer
   , columnMap            colProperties_map_t
@@ -380,6 +461,7 @@ create or replace package body ExcelGen is
   , tableList            tableList_t
   , tableForest          tableForest_t
   , data                 sheetData_t
+  , pageable             boolean := false
   , streamable           boolean
   , done                 boolean
   , hasProps             boolean
@@ -390,6 +472,8 @@ create or replace package body ExcelGen is
   , mergedCells          cellSpanList_t
   , floatingCells        floatingCellList_t
   , cellRanges           cellRangeList_t
+  , sharedFmlaSeq        pls_integer
+  , sharedFmlaMap        sharedFmlaMap_t 
   );
   
   type sheet_definition_map_t is table of sheet_definition_t index by pls_integer;
@@ -423,6 +507,8 @@ create or replace package body ExcelGen is
   , fileType             pls_integer
   , rt_cache             richText_cache_t
   , coreProperties       coreProperties_t
+  , names                ExcelTypes.CT_DefinedNames
+  , nameMap              ExcelTypes.CT_DefinedNameMap
   );
   
   type context_cache_t is table of context_t index by pls_integer;
@@ -619,6 +705,53 @@ create or replace package body ExcelGen is
       end loop;
     end if;
     return output;
+  end;
+
+  procedure insertAfter (t in out nocopy dbLinkedList_t, nodeId in pls_integer, newNodeId in pls_integer) is
+  begin
+    t.heap(newNodeId).prev := nodeId;
+    if t.heap(nodeId).next is null then
+      t.heap(newNodeId).next := null;
+      t.last := newNodeId;
+    else
+      t.heap(newNodeId).next := t.heap(nodeId).next;
+      t.heap(t.heap(nodeId).next).prev := newNodeId;
+    end if;
+    t.heap(nodeId).next := newNodeId;
+  end;
+  
+  procedure insertBefore (t in out nocopy dbLinkedList_t, nodeId in pls_integer, newNodeId in pls_integer) is
+  begin
+    t.heap(newNodeId).next := nodeId;
+    if t.heap(nodeId).prev is null then
+      t.heap(newNodeId).prev := null;
+      t.first := newNodeId;
+    else
+      t.heap(newNodeId).prev := t.heap(nodeId).prev;
+      t.heap(t.heap(nodeId).prev).next := newNodeId;
+    end if;
+    t.heap(nodeId).prev := newNodeId;
+  end;
+  
+  procedure insertFirst (t in out nocopy dbLinkedList_t, nodeId in pls_integer) is
+  begin
+    if t.first is null then
+      t.first := nodeId;
+      t.last := nodeId;
+      t.heap(nodeId).prev := null;
+      t.heap(nodeId).next := null;
+    else
+      insertBefore(t, t.first+0, nodeId);
+    end if;
+  end;
+
+  procedure insertLast (t in out nocopy dbLinkedList_t, nodeId in pls_integer) is
+  begin
+    if t.last is null then
+      insertFirst(t, nodeId);
+    else
+      insertAfter(t, t.last+0, nodeId);
+    end if;
   end;
 
   function getDefaultFormat (
@@ -1744,71 +1877,119 @@ create or replace package body ExcelGen is
     p_cursor_number  in integer
   , p_excludeSet     in int_set_t
   , p_offset         in pls_integer
+  , p_virtualColumns  in virtualColumnList_t
   )
   return column_list_t
   is
-    baseColumnList  dbms_sql.desc_tab3;
+    dbColumnList    dbms_sql.desc_tab3;
     columnCount     integer;
     data            data_t;
     columnList      column_list_t := column_list_t();
     COLUMN_DEFAULT  column_t;
-    columnItem      column_t;
+    col             column_t;
     columnId        pls_integer := 0;
+    cols            dbLinkedList_t;
+    vc              virtualColumn_t;
+    nodeId          pls_integer;
+    
+    function node (data in column_t) return pls_integer is
+      node  dbLinkedNode_t;
+    begin
+      node.id := cols.heap.count + 1;
+      
+      if node.data.excluded then
+        node.id := node.id * -1;
+      end if;
+      
+      node.data := data;
+      cols.heap(node.id) := node;
+      return node.id;
+    end;
+    
   begin
-    dbms_sql.describe_columns3(p_cursor_number, columnCount, baseColumnList);
+    dbms_sql.describe_columns3(p_cursor_number, columnCount, dbColumnList);
     
     for i in 1 .. columnCount loop
       
-      columnItem := COLUMN_DEFAULT;
+      col := COLUMN_DEFAULT;
     
-      case baseColumnList(i).col_type
+      case dbColumnList(i).col_type
       when dbms_sql.VARCHAR2_TYPE then
-        dbms_sql.define_column(p_cursor_number, i, data.varchar2_value, baseColumnList(i).col_max_len);
-        columnItem.supertype := ST_STRING;
+        dbms_sql.define_column(p_cursor_number, i, data.varchar2_value, dbColumnList(i).col_max_len);
+        col.supertype := ST_STRING;
       when dbms_sql.CHAR_TYPE then
-        dbms_sql.define_column_char(p_cursor_number, i, data.char_value, baseColumnList(i).col_max_len);
-        columnItem.supertype := ST_STRING;
+        dbms_sql.define_column_char(p_cursor_number, i, data.char_value, dbColumnList(i).col_max_len);
+        col.supertype := ST_STRING;
       when dbms_sql.NUMBER_TYPE then
         dbms_sql.define_column(p_cursor_number, i, data.number_value);
-        columnItem.supertype := ST_NUMBER;
+        col.supertype := ST_NUMBER;
       when dbms_sql.DATE_TYPE then
         dbms_sql.define_column(p_cursor_number, i, data.date_value);
-        columnItem.supertype := ST_DATETIME;
+        col.supertype := ST_DATETIME;
       when dbms_sql.TIMESTAMP_TYPE then
         dbms_sql.define_column(p_cursor_number, i, data.ts_value);
-        columnItem.supertype := ST_DATETIME;
+        col.supertype := ST_DATETIME;
       when dbms_sql.TIMESTAMP_WITH_TZ_TYPE then
         dbms_sql.define_column(p_cursor_number, i, data.tstz_value);
-        columnItem.supertype := ST_DATETIME;
+        col.supertype := ST_DATETIME;
       when dbms_sql.CLOB_TYPE then
         dbms_sql.define_column(p_cursor_number, i, data.clob_value);
-        columnItem.supertype := ST_LOB;
+        col.supertype := ST_LOB;
       when dbms_sql.USER_DEFINED_TYPE then
-        if baseColumnList(i).col_type_name = 'ANYDATA' then
+        if dbColumnList(i).col_type_name = 'ANYDATA' then
           dbms_sql.define_column(p_cursor_number, i, data.anydata_value);
-          columnItem.supertype := ST_VARIANT;
+          col.supertype := ST_VARIANT;
         else
-          error('Unsupported data type: %d [%s], for column "%s"', baseColumnList(i).col_type, baseColumnList(i).col_type_name, baseColumnList(i).col_name);
+          error('Unsupported data type: %d [%s], for column "%s"', dbColumnList(i).col_type, dbColumnList(i).col_type_name, dbColumnList(i).col_name);
         end if;
       else
-        error('Unsupported data type: %d, for column "%s"', baseColumnList(i).col_type, baseColumnList(i).col_name);
+        error('Unsupported data type: %d, for column "%s"', dbColumnList(i).col_type, dbColumnList(i).col_name);
       end case;
       
-      columnItem.name := baseColumnList(i).col_name;
-      columnItem.type := baseColumnList(i).col_type;
-      columnItem.scale := baseColumnList(i).col_scale;
-      columnItem.hasLink := false;
-      columnItem.excluded := p_excludeSet.exists(i);
+      col.dbId := i;
+      col.name := dbColumnList(i).col_name;
+      col.type := dbColumnList(i).col_type;
+      col.scale := dbColumnList(i).col_scale;
+      --col.hasLink := false;
+      col.excluded := p_excludeSet.exists(i);
       
-      if not columnItem.excluded then
+      insertLast(cols, node(col));
+      
+    end loop;
+    
+    for i in 1 .. p_virtualColumns.count loop
+    
+      vc := p_virtualColumns(i);
+      
+      if vc.pos is null then
+        insertLast(cols, node(vc.col));
+      else
+        if vc.after then
+          insertAfter(cols, vc.pos, node(vc.col));
+        else
+          insertBefore(cols, vc.pos, node(vc.col));
+        end if;
+      end if;
+    
+    end loop;
+    
+    columnId := 0;
+    nodeId := cols.first;
+    while nodeId is not null loop
+      
+      col := cols.heap(nodeId).data;
+      
+      if not col.excluded then
         columnId := columnId + 1;
-        columnItem.id := columnId;
-        columnItem.colNum := p_offset - 1 + columnId;
-        columnItem.colRef := base26encode(columnItem.colNum);
-      end if; 
+        col.id := columnId;
+        col.colNum := p_offset - 1 + columnId;
+        col.colRef := base26encode(col.colNum);
+      end if;
       
       columnList.extend;
-      columnList(i) := columnItem;
+      columnList(columnId) := col;
+      
+      nodeId := cols.heap(nodeId).next;
       
     end loop;
     
@@ -1851,10 +2032,9 @@ create or replace package body ExcelGen is
       
     end if;
     
-    meta.columnList := getColumnList(meta.cursorNumber, meta.excludeSet, colOffset);
+    meta.columnList := getColumnList(meta.cursorNumber, meta.excludeSet, colOffset, meta.virtualColumns);
     
     for i in 1 .. meta.columnList.count loop
-      meta.columnMap(meta.columnList(i).name) := i;
       if not meta.columnList(i).excluded then
         meta.visibleColumnSet(i) := meta.columnList(i).colRef;
       end if;
@@ -1942,6 +2122,7 @@ create or replace package body ExcelGen is
   )
   return data_map_t
   is
+    dbId     pls_integer;
     data     data_t;
     dataMap  data_map_t;
   begin
@@ -1951,48 +2132,58 @@ create or replace package body ExcelGen is
       data := null;
       data.st := sqlMeta.columnList(i).supertype;
       data.db_type := sqlMeta.columnList(i).type;
+      dbId := sqlMeta.columnList(i).dbId;
 
-      case data.db_type
-      when dbms_sql.VARCHAR2_TYPE then
-        dbms_sql.column_value(sqlMeta.cursorNumber, i, data.varchar2_value);
-        data.varchar2_value := stripXmlControlChars(data.varchar2_value);
-            
-      when dbms_sql.CHAR_TYPE then
-        dbms_sql.column_value_char(sqlMeta.cursorNumber, i, data.char_value);
-        data.varchar2_value := stripXmlControlChars(rtrim(data.char_value));
-            
-      when dbms_sql.NUMBER_TYPE then
-        dbms_sql.column_value(sqlMeta.cursorNumber, i, data.number_value);
-        if sqlMeta.columnList(i).scale between -84 and 0 then
-          data.varchar2_value := to_char(data.number_value);
-        else
+      if data.st != ST_FORMULA then
+
+        case data.db_type
+        when dbms_sql.VARCHAR2_TYPE then
+          dbms_sql.column_value(sqlMeta.cursorNumber, dbId, data.varchar2_value);
+          data.varchar2_value := stripXmlControlChars(data.varchar2_value);
+              
+        when dbms_sql.CHAR_TYPE then
+          dbms_sql.column_value_char(sqlMeta.cursorNumber, dbId, data.char_value);
+          data.varchar2_value := stripXmlControlChars(rtrim(data.char_value));
+              
+        when dbms_sql.NUMBER_TYPE then
+          dbms_sql.column_value(sqlMeta.cursorNumber, dbId, data.number_value);
+          if sqlMeta.columnList(i).scale between -84 and 0 then
+            data.varchar2_value := to_char(data.number_value);
+          else
+            data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
+          end if;
+              
+        when dbms_sql.DATE_TYPE then
+          dbms_sql.column_value(sqlMeta.cursorNumber, dbId, data.date_value);
+          data.number_value := toOADate(dt => data.date_value);
           data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
-        end if;
-            
-      when dbms_sql.DATE_TYPE then
-        dbms_sql.column_value(sqlMeta.cursorNumber, i, data.date_value);
-        data.number_value := toOADate(dt => data.date_value);
-        data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
-            
-      when dbms_sql.TIMESTAMP_TYPE then
-        dbms_sql.column_value(sqlMeta.cursorNumber, i, data.ts_value);
-        data.ts_value := timestampRound(data.ts_value, 3);
-        data.number_value := toOADate(ts => data.ts_value);
-        data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
-            
-      when dbms_sql.TIMESTAMP_WITH_TZ_TYPE then
-        dbms_sql.column_value(sqlMeta.cursorNumber, i, data.tstz_value);
-        data.tstz_value := timestampRound(data.tstz_value, 3);
-        data.number_value := toOADate(ts => data.tstz_value);
-        data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
-            
-      when dbms_sql.CLOB_TYPE then
-        dbms_sql.column_value(sqlMeta.cursorNumber, i, data.clob_value);
+              
+        when dbms_sql.TIMESTAMP_TYPE then
+          dbms_sql.column_value(sqlMeta.cursorNumber, dbId, data.ts_value);
+          data.ts_value := timestampRound(data.ts_value, 3);
+          data.number_value := toOADate(ts => data.ts_value);
+          data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
+              
+        when dbms_sql.TIMESTAMP_WITH_TZ_TYPE then
+          dbms_sql.column_value(sqlMeta.cursorNumber, dbId, data.tstz_value);
+          data.tstz_value := timestampRound(data.tstz_value, 3);
+          data.number_value := toOADate(ts => data.tstz_value);
+          data.varchar2_value := to_char(data.number_value, 'TM9', NLS_PARAM_STRING);
+              
+        when dbms_sql.CLOB_TYPE then
+          dbms_sql.column_value(sqlMeta.cursorNumber, dbId, data.clob_value);
+          
+        when dbms_sql.USER_DEFINED_TYPE then -- should be ANYDATA
+          dbms_sql.column_value(sqlMeta.cursorNumber, dbId, data.anydata_value);
+          prepareData(data, data.anydata_value);
+        end case;
+      
+      else
         
-      when dbms_sql.USER_DEFINED_TYPE then -- should be ANYDATA
-        dbms_sql.column_value(sqlMeta.cursorNumber, i, data.anydata_value);
-        prepareData(data, data.anydata_value);
-      end case;
+        --data.varchar2_value := sqlMeta.columnList(i).fmla.expr;
+        null;
+      
+      end if;
           
       dataMap(i) := data;
           
@@ -2287,6 +2478,7 @@ create or replace package body ExcelGen is
   begin
     wb.sheets := CT_Sheets();
     wb.styles := newStylesheet();
+    wb.refStyle := ExcelFmla.REF_A1;
     return wb;
   end;
   
@@ -2573,6 +2765,18 @@ create or replace package body ExcelGen is
     end if;
   end;
 
+  procedure putNameList (
+    ctx    in out nocopy context_t
+  , names  in ExcelTypes.CT_DefinedNames
+  )
+  is
+  begin
+    for i in 1 .. names.count loop
+      ctx.names.extend;
+      ctx.names(ctx.names.last) := names(i);
+    end loop;
+  end;
+
   procedure writeRowStart (
     stream  in out nocopy stream_t
   , r       in row_t
@@ -2657,6 +2861,21 @@ create or replace package body ExcelGen is
             ||case when cell.xfId != 0 then '" s="'||to_char(cell.xfId) end
             ||'" t="s"><v>'||to_char(sst_idx - 1)||'</v></c>');
               
+    when ST_FORMULA then
+      stream_write(stream, '<c r="'||cellRef||case when cell.xfId != 0 then '" s="'||to_char(cell.xfId) end||'">'||
+                           case when cell.f.shared then
+                             '<f t="shared" si="'||to_char(cell.f.sharedIdx)||'"' ||
+                             case when cell.f.hasRef then ' ref="###'||to_char(cell.f.sharedIdx)||'###">' ||
+                               dbms_xmlgen.convert(ExcelFmla.parse(cell.f.expr, p_cellRef => cellRef, p_refStyle => cell.f.refStyle)) ||
+                               '</f>' 
+                             else
+                               '/>'
+                             end
+                           else
+                             '<f>'||dbms_xmlgen.convert(ExcelFmla.parse(cell.f.expr, p_cellRef => cellRef, p_refStyle => cell.f.refStyle))||'</f>'
+                           end ||
+                           '</c>');
+    
     end case;
         
   end;
@@ -2702,7 +2921,21 @@ create or replace package body ExcelGen is
     when ST_RICHTEXT then
       sst_idx := put_rt(ctx, ExcelTypes.makeRichText(cell.v.xml_value, getCellFont(ctx, cell.xfId)));
       xutl_xlsb.put_CellIsst(stream, cell.cn-1, cell.xfId, sst_idx-1);
-              
+    
+    when ST_FORMULA then
+      xutl_xlsb.put_CellFmla(
+        stream
+      , colIndex => cell.cn-1
+      , styleRef => cell.xfId
+      , expr     => cell.f.expr
+      , shared   => cell.f.shared
+      , si       => cell.f.sharedIdx
+      , cellRef  => cell.c||to_char(cell.r)
+      , refStyle => cell.f.refStyle
+      );
+      -- retrieving generated names from formula context and append to existing collection
+      putNameList(ctx, Excelfmla.getNames());
+    
     end case;
         
   end;
@@ -2784,6 +3017,70 @@ create or replace package body ExcelGen is
       end loop;
     end loop;
   end;
+
+  procedure validateName (input in varchar2) is
+    tmp  varchar2(32767) := upper(input);
+  begin
+    if length(tmp) > 255 then
+      error('Defined name is too long: %s', input);
+    end if;
+    if ExcelFmla.isValidCellReference(tmp)
+      or tmp in ('R','C','RC') 
+      or regexp_like(tmp, '^C0*[1-9]')
+    then
+      error('Invalid defined name: %s', input);
+    end if;
+    tmp := regexp_substr(tmp, '^R0*([1-9]\d*)', 1, 1, null, 1);
+    if tmp is not null and length(tmp) < 8 and to_number(tmp) between 1 and MAX_ROW_NUMBER then
+      error('Invalid defined name: %s', input);
+    end if;
+  end;
+
+  procedure putNameImpl (
+    ctxId       in ctxHandle
+  , name        in varchar2
+  , value       in varchar2
+  , sheetId     in sheetHandle
+  , cellRef     in varchar2 default null
+  , comment     in varchar2 default null
+  , hidden      in boolean default false
+  , futureFunc  in boolean default false
+  , builtIn     in boolean default false
+  , refStyle    in pls_integer default null
+  )
+  is
+    nameKey      varchar2(2048);
+    definedName  ExcelTypes.CT_DefinedName;
+  begin
+    loadContext(ctxId);
+    
+    if sheetId is not null then
+      definedName.scope := currentCtx.sheetDefinitionMap(sheetId).sheetName;
+    end if;
+    
+    nameKey := upper(case when definedName.scope is not null then definedName.scope || '!' end || name);
+    if currentCtx.nameMap.exists(nameKey) then
+      error('Defined name already exists: %s', name);
+    end if;
+    
+    validateName(name);
+    
+    currentCtx.names.extend;
+    definedName.idx := currentCtx.names.last;
+    definedName.name := name;
+    
+    definedName.formula := value;
+    definedName.cellRef := cellRef;
+    definedName.refStyle := refStyle;
+    definedName.comment := comment;
+    definedName.hidden := nvl(hidden, false);
+    definedName.futureFunction := nvl(futureFunc, false);
+    definedName.builtIn := nvl(builtIn, false);
+    
+    currentCtx.names(definedName.idx) := definedName;
+    currentCtx.nameMap(nameKey) := definedName;
+  
+  end;
   
   procedure createWorksheetImpl (
     ctx  in out nocopy context_t
@@ -2804,6 +3101,7 @@ create or replace package body ExcelGen is
     cellSpan        cellSpan_t;
     tableId         pls_integer;
     rId             varchar2(256);
+    si              pls_integer;
     
     part            part_t;
     sheet           CT_Sheet;
@@ -2942,7 +3240,7 @@ create or replace package body ExcelGen is
         end if;
         
       end if;
-      
+            
       -- prefetch
       nrows := dbms_sql.fetch_rows(t.sqlMetadata.cursorNumber);
       t.isEmpty := (nrows = 0);
@@ -2971,8 +3269,7 @@ create or replace package body ExcelGen is
           
             cell.v := dataMap(i);
             cell.cn := t.sqlMetadata.columnList(i).colNum;
-            cell.c := t.sqlMetadata.columnList(i).colRef;
-            
+            cell.c := t.sqlMetadata.columnList(i).colRef;    
             cell.xfId := t.sqlMetadata.columnList(i).xfId;
 
             -- if original SQL type is ANYDATA, and actual value is numeric or datetime, apply default format
@@ -2983,6 +3280,22 @@ create or replace package body ExcelGen is
             -- merge table row-level style
             if t.rowMap.exists(t.sqlMetadata.r_num) and t.rowMap(t.sqlMetadata.r_num).xfId is not null then
               cell.xfId := mergeCellStyle(ctx, t.rowMap(t.sqlMetadata.r_num).xfId, cell.xfId);
+            end if;
+            
+            -- (shared) formula
+            if cell.v.st = ST_FORMULA then
+              cell.f := t.sqlMetadata.columnList(i).fmla;
+              if cell.f.shared then
+                if not sd.sharedFmlaMap.exists(cell.f.sharedIdx) then
+                  sd.sharedFmlaMap(cell.f.sharedIdx).columnId := i;
+                  sd.sharedFmlaMap(cell.f.sharedIdx).tableId := tId;
+                  cell.f.hasRef := true;
+                else
+                  cell.f.hasRef := false;
+                end if;
+              else
+                cell.f := null;
+              end if;
             end if;
             
             if sd.streamable then
@@ -3057,6 +3370,7 @@ create or replace package body ExcelGen is
       cell.c := base26encode(cell.cn);
       cell.xfId := cell2.xfId;    
       cell.v := cell2.data;
+      cell.f := cell2.fmla;
       sd.data.rows(cell.r).id := cell.r;
       sd.data.rows(cell.r).cells(cell.cn) := cell;
     end loop;
@@ -3133,8 +3447,20 @@ create or replace package body ExcelGen is
       -- if there's only one table, set sheet-level autoFilter accordingly
       if t.header.show and t.header.autoFilter then
         if not t.formatAsTable then
-          sheet.filterRange := t.range;
-          ctx.workbook.hasDefinedNames := true;
+        
+          putNameImpl(
+            ctxId   => currentCtxId
+          , name    => '_xlnm._FilterDatabase'
+          , value   => '''' || sd.sheetName || '''!' || getRangeExpr(t.range, true)
+          , sheetId => sd.sheetIndex
+          , hidden  => true
+          , builtIn => true
+          );
+          
+          ExcelFmla.putName('_xlnm._FilterDatabase', sd.sheetName);
+        
+          --sheet.filterRange := t.range;
+          --ctx.workbook.hasDefinedNames := true;
           stream_write(stream, '<autoFilter ref="'||getRangeExpr(t.range)||'"/>');
         end if;
       end if;
@@ -3173,9 +3499,15 @@ create or replace package body ExcelGen is
         error('Invalid sheet name: %s', sheet.name);
       end if;
         
-      -- check name uniqueness
-      if ctx.workbook.sheetMap.exists(sheet.name) then
+      -- check name uniqueness (case-insensitive)
+      if ctx.workbook.sheetMap.exists(upper(sheet.name)) then
         error('Duplicate sheet name: %s', sheet.name);
+      end if;
+      
+      sheet.state := sd.state;
+      -- save idx of the first visible sheet
+      if ctx.workbook.firstSheet is null and sheet.state = ST_VISIBLE then
+        ctx.workbook.firstSheet := sheet.sheetId;
       end if;
         
       sheet.partName := 'xl/worksheets/sheet'||to_char(sheet.sheetId)||'.xml';
@@ -3197,12 +3529,25 @@ create or replace package body ExcelGen is
 
       stream_write(stream, '</worksheet>');
       stream_flush(stream);
-        
+      
+      -- set shared formula ranges
+      si := sd.sharedFmlaMap.first;
+      while si is not null loop
+        t := sd.tableList(sd.sharedFmlaMap(si).tableId);
+        stream.content := replace(stream.content
+                                , '###'||to_char(si)||'###'
+                                , makeRange(t.sqlMetadata.visibleColumnSet(sd.sharedFmlaMap(si).columnId)
+                                          , t.range.start_ref.r + case when t.header.show then 1 else 0 end
+                                          , t.sqlMetadata.visibleColumnSet(sd.sharedFmlaMap(si).columnId)
+                                          , t.range.end_ref.r).expr);
+        si := sd.sharedFmlaMap.next(si);
+      end loop;
+      
       part.content := stream.content;
         
       -- add sheet to workbook
       ctx.workbook.sheets(sheet.sheetId) := sheet;
-      ctx.workbook.sheetMap(sheet.name) := sheet.sheetId;
+      ctx.workbook.sheetMap(upper(sheet.name)) := sheet.sheetId;
         
       -- add sheet part to package
       addPart(ctx, part);
@@ -3232,6 +3577,7 @@ create or replace package body ExcelGen is
     cellSpan        cellSpan_t;
     tableId         pls_integer;
     rId             varchar2(256);
+    si              pls_integer;
     
     part            part_t;
     sheet           CT_Sheet;
@@ -3245,14 +3591,8 @@ create or replace package body ExcelGen is
     
     sheet.tableParts := CT_TableParts();
     
-    -- prefetch
-    --nrows := dbms_sql.fetch_rows(t.sqlMetadata.cursorNumber);
-    
-    --if nrows != 0 or ( nrows = 0 and t.sqlMetadata.partitionId = 0 ) then 
-    --isEmpty := (nrows = 0);
-    
-    stream := xutl_xlsb.new_stream();        
-    xutl_xlsb.put_simple_record(stream, 129);  -- BrtBeginSheet
+    stream := xutl_xlsb.new_stream();
+    xutl_xlsb.put_BeginSheet(stream);
       
     if sd.tabColor is not null then
       xutl_xlsb.put_WsProp(stream, sd.tabColor);
@@ -3401,6 +3741,22 @@ create or replace package body ExcelGen is
             if t.rowMap.exists(t.sqlMetadata.r_num) and t.rowMap(t.sqlMetadata.r_num).xfId is not null then
               cell.xfId := mergeCellStyle(ctx, t.rowMap(t.sqlMetadata.r_num).xfId, cell.xfId);
             end if;            
+
+            -- (shared) formula
+            if cell.v.st = ST_FORMULA then
+              cell.f := t.sqlMetadata.columnList(i).fmla;
+              if cell.f.shared then
+                if not sd.sharedFmlaMap.exists(cell.f.sharedIdx) then
+                  sd.sharedFmlaMap(cell.f.sharedIdx).columnId := i;
+                  sd.sharedFmlaMap(cell.f.sharedIdx).tableId := tId;
+                  cell.f.hasRef := true;
+                else
+                  cell.f.hasRef := false;
+                end if;
+              else
+                cell.f := null;
+              end if;
+            end if;
             
             if sd.streamable then             
               writeCellBin(ctx, stream, cell);
@@ -3470,6 +3826,7 @@ create or replace package body ExcelGen is
       cell.c := base26encode(cell.cn);
       cell.xfId := cell2.xfId;    
       cell.v := cell2.data;
+      cell.f := cell2.fmla;
       sd.data.rows(cell.r).id := cell.r;
       sd.data.rows(cell.r).cells(cell.cn) := cell;
     end loop;
@@ -3543,8 +3900,21 @@ create or replace package body ExcelGen is
       -- if there's only one table, set sheet-level autoFilter accordingly
       if t.header.show and t.header.autoFilter then
         if not t.formatAsTable then
-          sheet.filterRange := t.range;
-          ctx.workbook.hasDefinedNames := true;
+
+          putNameImpl(
+            ctxId   => currentCtxId
+          , name    => '_FilterDatabase'
+          , value   => '''' || sd.sheetName || '''!' || getRangeExpr(t.range, true)
+          , sheetId => sd.sheetIndex
+          , hidden  => true
+          , builtIn => true
+          );
+          
+          -- TODO: do this in putNameImpl if hidden = true
+          ExcelFmla.putName('_FilterDatabase', sd.sheetName);
+
+          --sheet.filterRange := t.range;
+          --ctx.workbook.hasDefinedNames := true;
           xutl_xlsb.put_BeginAFilter(
             stream
           , firstRow    => t.range.start_ref.r - 1
@@ -3596,9 +3966,15 @@ create or replace package body ExcelGen is
         error('Invalid sheet name: %s', sheet.name);
       end if;
         
-      -- check name uniqueness
-      if ctx.workbook.sheetMap.exists(sheet.name) then
+      -- check name uniqueness (case-insensitive)
+      if ctx.workbook.sheetMap.exists(upper(sheet.name)) then
         error('Duplicate sheet name: %s', sheet.name);
+      end if;
+
+      sheet.state := sd.state;
+      -- save idx of the first visible sheet
+      if ctx.workbook.firstSheet is null and sheet.state = ST_VISIBLE then
+        ctx.workbook.firstSheet := sheet.sheetId;
       end if;
         
       sheet.partName := 'xl/worksheets/sheet'||to_char(sheet.sheetId)||'.bin';
@@ -3620,13 +3996,31 @@ create or replace package body ExcelGen is
         
       xutl_xlsb.put_simple_record(stream, 130);  -- BrtEndSheet
       xutl_xlsb.flush_stream(stream);
+
+      -- set shared formula ranges      
+      si := sd.sharedFmlaMap.first;
+      while si is not null loop
+        t := sd.tableList(sd.sharedFmlaMap(si).tableId);
         
+        xutl_xlsb.put_ShrFmlaRfX(
+          stream   => stream
+        , si       => si
+        , firstRow => t.range.start_ref.r + case when t.header.show then 1 else 0 end - 1
+        , firstCol => t.sqlMetadata.columnList(sd.sharedFmlaMap(si).columnId).colNum - 1
+        , lastRow  => t.range.end_ref.r - 1
+        , lastCol  => t.sqlMetadata.columnList(sd.sharedFmlaMap(si).columnId).colNum - 1
+        );
+        
+        si := sd.sharedFmlaMap.next(si);
+      end loop;
+      
+
       part.contentBin := stream.content;
       part.isBinary := true;
         
       -- add sheet to workbook
       ctx.workbook.sheets(sheet.sheetId) := sheet;
-      ctx.workbook.sheetMap(sheet.name) := sheet.sheetId;
+      ctx.workbook.sheetMap(upper(sheet.name)) := sheet.sheetId;
         
       -- add sheet part to package
       addPart(ctx, part);
@@ -3719,9 +4113,8 @@ create or replace package body ExcelGen is
   , sheetIndex  in pls_integer
   )
   is
-    sd               sheet_definition_t;
-    paginationCount  pls_integer := 0;
-    idx              pls_integer;
+    sd   sheet_definition_t;
+    idx  pls_integer;
   begin
     
     sd := ctx.sheetDefinitionMap(sheetIndex);
@@ -3753,12 +4146,6 @@ create or replace package body ExcelGen is
       prepareTable(ctx, sd, sd.tableForest.roots(i));
     end loop;
     
-    for i in 1 .. sd.tableList.count loop
-      if sd.tableList(i).sqlMetadata.partitionBySize then
-        paginationCount := paginationCount + 1;
-      end if;      
-    end loop;
-    
     -- hyperlinks
     prepareHyperlinks(sd);
     
@@ -3769,9 +4156,11 @@ create or replace package body ExcelGen is
     sd.done := false;
     
     -- layout check
-    if paginationCount != 0 and not sd.streamable then
+    if sd.pageable and not sd.streamable then
       error('Cannot paginate data in a multitable or mixed-content worksheet');
     end if;
+    
+    ExcelFmla.setCurrentSheet(sd.sheetName);
     
     while not sd.done loop
       case ctx.fileType
@@ -3884,32 +4273,72 @@ create or replace package body ExcelGen is
     
     stream_write(stream, '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">');
     stream_write(stream, '<fileVersion appName="xl" lastEdited="2" lowestEdited="2"/>');
+    
+    stream_write(stream, '<bookViews>');
+    stream_write(stream, '<workbookView firstSheet="'||to_char(ctx.workbook.firstSheet - 1)||'" activeTab="'||to_char(ctx.workbook.firstSheet - 1)||'"/>');
+    stream_write(stream, '</bookViews>');
+    
     stream_write(stream, '<sheets>');
     
     for i in 1 .. ctx.workbook.sheets.count loop
       -- add sheet relationships
       ctx.workbook.sheets(i).rId := addRelationship(part, RS_WORKSHEET, ctx.workbook.sheets(i).partName);
-      stream_write(stream, '<sheet name="'||dbms_xmlgen.convert(ctx.workbook.sheets(i).name)||
-                               '" sheetId="'||ctx.workbook.sheets(i).sheetId||
-                               '" r:id="'||ctx.workbook.sheets(i).rId||'"/>');
+      stream_write(stream, '<sheet name="'||dbms_xmlgen.convert(ctx.workbook.sheets(i).name) ||
+                               '" sheetId="'||ctx.workbook.sheets(i).sheetId || '"' ||
+                               case when ctx.workbook.sheets(i).state != ST_VISIBLE 
+                                    then ' state="' ||
+                                         case ctx.workbook.sheets(i).state
+                                         when ST_HIDDEN then 'hidden'
+                                         when ST_VERYHIDDEN then 'veryHidden'
+                                         end || '"' 
+                               end ||
+                               ' r:id="'||ctx.workbook.sheets(i).rId||'"/>');
     end loop;
     
     stream_write(stream, '</sheets>');
     
-    if ctx.workbook.hasDefinedNames then
+    if ctx.names.count != 0 then
       stream_write(stream, '<definedNames>');
-      for i in 1 .. ctx.workbook.sheets.count loop
-        if ctx.workbook.sheets(i).filterRange.expr is not null then
-          stream_write(stream, '<definedName name="_xlnm._FilterDatabase" localSheetId="'||to_char(i-1)||'" hidden="1">');
-          stream_write(stream, dbms_xmlgen.convert('''' || replace(ctx.workbook.sheets(i).name, '''', '''''') || '''') || '!' || getRangeExpr(ctx.workbook.sheets(i).filterRange, true));
+      for i in 1 .. ctx.names.count loop
+        
+        if not ctx.names(i).futureFunction then
+          
+          stream_write(stream, '<definedName name="'||ctx.names(i).name||'"');
+          if ctx.names(i).comment is not null then
+            stream_write(stream, ' comment="'||dbms_xmlgen.convert(ctx.names(i).comment)||'"');
+          end if;
+          if ctx.names(i).scope is not null then
+            stream_write(stream, ' localSheetId="'||to_char(ctx.workbook.sheetMap(upper(ctx.names(i).scope)) - 1)||'"');
+          end if;
+          if ctx.names(i).hidden then
+            stream_write(stream, ' hidden="1"');
+          end if;
+          stream_write(stream, '>');
+          
+          -- set current sheet to resolve unscoped cell references in the formula,
+          -- an error will be raised during parsing if an unscoped cell reference is found in a workbook-level name
+          ExcelFmla.setCurrentSheet(ctx.names(i).scope);
+          stream_write(stream
+                     , dbms_xmlgen.convert(
+                         ExcelFmla.parse(
+                           p_expr     => ctx.names(i).formula
+                         , p_type     => ExcelFmla.FMLATYPE_NAME
+                         , p_cellRef  => ctx.names(i).cellRef
+                         , p_refStyle => ctx.names(i).refStyle
+                         ) ) );
+          
           stream_write(stream, '</definedName>');
+        
         end if;
-      end loop;      
+        
+      end loop;
+            
       stream_write(stream, '</definedNames>');
+      
     end if;
     
     -- set calculation engine version to max value
-    stream_write(stream, '<calcPr calcId="999999"/>');
+    stream_write(stream, '<calcPr calcId="999999"' || case when ctx.workbook.refStyle = ExcelFmla.REF_R1C1 then ' refMode="R1C1"' end || '/>');
     
     stream_write(stream, '</workbook>');
     stream_flush(stream);
@@ -3940,61 +4369,27 @@ create or replace package body ExcelGen is
   is
     stream  xutl_xlsb.Stream_T := xutl_xlsb.new_stream();
     part    part_t;
-    filterRange  range_t;
-    links        xutl_xlsb.SupportingLinks_T;
   begin
     part.name := 'xl/workbook.bin';
     part.contentType := null;
     part.rels := CT_Relationships();
     
     xutl_xlsb.put_simple_record(stream, 131); -- BrtBeginBook
-    xutl_xlsb.put_defaultBookViews(stream);
+    xutl_xlsb.put_defaultBookViews(stream, ctx.workbook.firstSheet - 1);
     xutl_xlsb.put_simple_record(stream, 143); -- BrtBeginBundleShs
+    xutl_xlsb.resetSheetCache;
     
     for i in 1 .. ctx.workbook.sheets.count loop
       -- add sheet relationships
       ctx.workbook.sheets(i).rId := addRelationship(part, RS_WORKSHEET, ctx.workbook.sheets(i).partName);
-      xutl_xlsb.put_BundleSh(stream, ctx.workbook.sheets(i).sheetId, ctx.workbook.sheets(i).rId, ctx.workbook.sheets(i).name);
+      xutl_xlsb.put_BundleSh(stream, ctx.workbook.sheets(i).sheetId, ctx.workbook.sheets(i).rId, ctx.workbook.sheets(i).name, ctx.workbook.sheets(i).state);
     end loop;
     
     xutl_xlsb.put_simple_record(stream, 144); -- BrtEndBundleShs
+      
+    xutl_xlsb.put_Names(stream, ctx.names);
     
-    if ctx.workbook.hasDefinedNames then
-      
-      xutl_xlsb.put_simple_record(stream, 353); -- BrtBeginExternals
-      xutl_xlsb.put_simple_record(stream, 357); -- BrtSupSelf
-      
-      -- generate supporting links
-      for i in 1 .. ctx.workbook.sheets.count loop
-        if ctx.workbook.sheets(i).filterRange.expr is not null then
-          ctx.workbook.sheets(i).filterXti := 
-            xutl_xlsb.add_SupportingLink(links
-                                        , 0    -- ref to BrtSupSelf record
-                                        , i-1  -- bundleSh index
-                                        );
-        end if;
-      end loop;
-      xutl_xlsb.put_ExternSheet(stream, links);  -- BrtExternSheet
-      
-      xutl_xlsb.put_simple_record(stream, 354); -- BrtEndExternals
-    
-      for i in 1 .. ctx.workbook.sheets.count loop
-        if ctx.workbook.sheets(i).filterRange.expr is not null then
-          filterRange := ctx.workbook.sheets(i).filterRange;
-          xutl_xlsb.put_FilterDatabase(stream
-                                     , bundleShIndex => i-1
-                                     , xti           => ctx.workbook.sheets(i).filterXti
-                                     , firstRow      => filterRange.start_ref.r - 1
-                                     , firstCol      => filterRange.start_ref.cn - 1
-                                     , lastRow       => filterRange.end_ref.r - 1
-                                     , lastCol       => filterRange.end_ref.cn - 1
-                                     );
-        end if;
-      end loop;
-      
-    end if;
-    
-    xutl_xlsb.put_CalcProp(stream, 999999); -- BrtCalcProp
+    xutl_xlsb.put_CalcProp(stream, 999999, ctx.workbook.refStyle); -- BrtCalcProp
     
     xutl_xlsb.put_simple_record(stream, 132);  -- BrtEndBook
     xutl_xlsb.flush_stream(stream);
@@ -4211,6 +4606,7 @@ create or replace package body ExcelGen is
     ctx.pck.parts := part_list_t();
     ctx.pck.rels := CT_Relationships();
     ctx.workbook := new_workbook();
+    ctx.names := ExcelTypes.CT_DefinedNames();
     ctx_cache(ctxId) := ctx;
     return ctxId;
   end;
@@ -4249,6 +4645,7 @@ create or replace package body ExcelGen is
     if p_paginate then
       t.sqlMetadata.partitionBySize := true;
       t.sqlMetadata.partitionSize := nvl(p_pageSize, MAX_ROW_NUMBER);
+      sd.pageable := true;
     end if;    
     
     if p_query is not null then
@@ -4266,6 +4663,7 @@ create or replace package body ExcelGen is
       t.anchorRef.colOffset := 1;
     end if;
     
+    t.sqlMetadata.virtualColumns := virtualColumnList_t();
     t.sqlMetadata.excludeSet := parseIntList(p_excludeCols, ',');
     t.sqlMetadata.maxRows := p_maxRows;
     
@@ -4281,14 +4679,12 @@ create or replace package body ExcelGen is
   , p_sheetName   in varchar2
   , p_tabColor    in varchar2 default null
   , p_sheetIndex  in pls_integer default null
+  , p_state       in pls_integer default 0
   )
   return sheetHandle
   is
     sd  sheet_definition_t;
-  begin
-    sd.sheetName := p_sheetName;
-    sd.tabColor := ExcelTypes.validateColor(p_tabColor);
-    
+  begin    
     if p_sheetIndex is not null then
       if not ctx.sheetDefinitionMap.exists(p_sheetIndex) then
         sd.sheetIndex := p_sheetIndex;
@@ -4299,14 +4695,26 @@ create or replace package body ExcelGen is
       sd.sheetIndex := nvl(ctx.sheetDefinitionMap.last, 0) + 1;
     end if;
     
+    if ctx.sheetIndexMap.exists(upper(p_sheetName)) then
+       error('Duplicate sheet name: %s', p_sheetName);
+    end if;
+    
+    sd.sheetName := p_sheetName;
+    sd.tabColor := ExcelTypes.validateColor(p_tabColor);
+    if p_state not in (ST_VISIBLE, ST_HIDDEN, ST_VERYHIDDEN) then
+      error('Invalid sheet visibility state: %d', p_state);
+    end if;
+    sd.state := nvl(p_state, ST_VISIBLE);
+    
     sd.mergedCells := cellSpanList_t();
     sd.tableList := tableList_t();
     sd.data.hasCells := false;
     sd.floatingCells := floatingCellList_t();
     sd.cellRanges := cellRangeList_t();
+    sd.sharedFmlaSeq := 0;
     
     ctx.sheetDefinitionMap(sd.sheetIndex) := sd;
-    ctx.sheetIndexMap(sd.sheetName) := sd.sheetIndex;
+    ctx.sheetIndexMap(upper(sd.sheetName)) := sd.sheetIndex;
     
     return sd.sheetIndex;
     
@@ -4317,6 +4725,7 @@ create or replace package body ExcelGen is
   , p_sheetName   in varchar2
   , p_tabColor    in varchar2 default null
   , p_sheetIndex  in pls_integer default null
+  , p_state       in pls_integer default null
   )
   return sheetHandle
   is
@@ -4327,6 +4736,7 @@ create or replace package body ExcelGen is
            , p_sheetName
            , p_tabColor
            , p_sheetIndex
+           , p_state
            );
   end;
   
@@ -4339,12 +4749,13 @@ create or replace package body ExcelGen is
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
   , p_maxRows     in integer default null
+  , p_state       in pls_integer default null
   , p_excludeCols in varchar2 default null
   )
   is
     sheetId  sheetHandle;
   begin
-    sheetId := addSheetFromQuery(p_ctxId, p_sheetName, p_query, p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_maxRows, p_excludeCols);
+    sheetId := addSheetFromQuery(p_ctxId, p_sheetName, p_query, p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_maxRows, p_state, p_excludeCols);
   end;
 
   procedure addSheetFromQuery (
@@ -4356,11 +4767,12 @@ create or replace package body ExcelGen is
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
   , p_maxRows     in integer default null
+  , p_state       in pls_integer default null
   , p_excludeCols in varchar2 default null
   )
   is
   begin
-    addSheetFromQuery(p_ctxId, p_sheetName, to_clob(p_query), p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_maxRows, p_excludeCols);
+    addSheetFromQuery(p_ctxId, p_sheetName, to_clob(p_query), p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_maxRows, p_state, p_excludeCols);
   end;
 
   function addSheetFromQuery (
@@ -4372,6 +4784,7 @@ create or replace package body ExcelGen is
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
   , p_maxRows     in integer default null
+  , p_state       in pls_integer default null
   , p_excludeCols in varchar2 default null
   )
   return sheetHandle
@@ -4383,7 +4796,7 @@ create or replace package body ExcelGen is
     if p_query is null or dbms_lob.getlength(p_query) = 0 then
       error('Query string argument is null or empty');
     else
-      sheetId := addSheetImpl(currentCtx, p_sheetName, p_tabColor, p_sheetIndex);
+      sheetId := addSheetImpl(currentCtx, p_sheetName, p_tabColor, p_sheetIndex, p_state);
     end if;
     
     tableId := putTableImpl(currentCtx.sheetDefinitionMap(sheetId), p_query, null, p_paginate, p_pageSize, null, p_maxRows, p_excludeCols);
@@ -4400,12 +4813,13 @@ create or replace package body ExcelGen is
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
   , p_maxRows     in integer default null
+  , p_state       in pls_integer default null
   , p_excludeCols in varchar2 default null
   )
   return sheetHandle
   is
   begin
-    return addSheetFromQuery(p_ctxId, p_sheetName, to_clob(p_query), p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_maxRows, p_excludeCols);
+    return addSheetFromQuery(p_ctxId, p_sheetName, to_clob(p_query), p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_maxRows, p_state, p_excludeCols);
   end;
 
   procedure addSheetFromCursor (
@@ -4417,12 +4831,13 @@ create or replace package body ExcelGen is
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
   , p_maxRows     in integer default null
+  , p_state       in pls_integer default null
   , p_excludeCols in varchar2 default null
   )
   is
     sheetId  sheetHandle;
   begin
-    sheetId := addSheetFromCursor(p_ctxId, p_sheetName, p_rc, p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_maxRows, p_excludeCols);
+    sheetId := addSheetFromCursor(p_ctxId, p_sheetName, p_rc, p_tabColor, p_paginate, p_pageSize, p_sheetIndex, p_maxRows, p_state, p_excludeCols);
   end;
 
   function addSheetFromCursor (
@@ -4434,6 +4849,7 @@ create or replace package body ExcelGen is
   , p_pageSize    in pls_integer default null
   , p_sheetIndex  in pls_integer default null
   , p_maxRows     in integer default null
+  , p_state       in pls_integer default null
   , p_excludeCols in varchar2 default null
   )
   return sheetHandle
@@ -4445,7 +4861,7 @@ create or replace package body ExcelGen is
     if p_rc is null then
       error('Ref cursor argument cannot be null');
     else
-      sheetId := addSheetImpl(currentCtx, p_sheetName, p_tabColor, p_sheetIndex);
+      sheetId := addSheetImpl(currentCtx, p_sheetName, p_tabColor, p_sheetIndex, p_state);
     end if;
     tableId := putTableImpl(currentCtx.sheetDefinitionMap(sheetId), null, p_rc, p_paginate, p_pageSize, null, p_maxRows, p_excludeCols);
     return sheetId;
@@ -4557,6 +4973,97 @@ create or replace package body ExcelGen is
     return tableId;
   end;
 
+  procedure addTableColumnImpl (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_tableId         in tableHandle
+  , p_name            in varchar2
+  , p_value           in varchar2
+  , p_columnId        in pls_integer
+  , p_after           in boolean
+  , p_refStyle        in pls_integer default null
+  )
+  is
+    t      table_t;
+    vc     virtualColumn_t;
+  begin
+    loadContext(p_ctxId);
+    t := currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId);
+    
+    vc.col.name := p_name;
+    vc.col.type := dbms_sql.VARCHAR2_TYPE;
+    vc.col.supertype := ST_FORMULA;
+    vc.col.fmla.expr := p_value;
+    vc.col.fmla.shared := true;
+    vc.col.fmla.refStyle := p_refStyle;
+    
+    vc.col.fmla.sharedIdx := currentCtx.sheetDefinitionMap(p_sheetId).sharedFmlaSeq;
+    currentCtx.sheetDefinitionMap(p_sheetId).sharedFmlaSeq := vc.col.fmla.sharedIdx + 1;
+    
+    vc.pos := p_columnId;
+    vc.after := p_after;
+    
+    t.sqlMetadata.virtualColumns.extend;
+    t.sqlMetadata.virtualColumns(t.sqlMetadata.virtualColumns.last) := vc;
+    
+    currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId) := t;
+  end;
+
+  procedure addTableColumn (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_tableId         in tableHandle
+  , p_name            in varchar2
+  , p_value           in varchar2
+  , p_refStyle        in pls_integer default null
+  )
+  is
+  begin
+    addTableColumnImpl(p_ctxId, p_sheetId, p_tableId, p_name, p_value, null, null, p_refStyle);
+  end;
+  
+  procedure addTableColumnBefore (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_tableId         in tableHandle
+  , p_name            in varchar2
+  , p_value           in varchar2
+  , p_columnId        in pls_integer
+  , p_refStyle        in pls_integer default null
+  )
+  is
+  begin
+    addTableColumnImpl(p_ctxId, p_sheetId, p_tableId, p_name, p_value, p_columnId, false, p_refStyle);
+  end;
+
+  procedure addTableColumnAfter (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_tableId         in tableHandle
+  , p_name            in varchar2
+  , p_value           in varchar2
+  , p_columnId        in pls_integer
+  , p_refStyle        in pls_integer default null
+  )
+  is
+  begin
+    addTableColumnImpl(p_ctxId, p_sheetId, p_tableId, p_name, p_value, p_columnId, true, p_refStyle);
+  end;
+
+  procedure putDefinedName (
+    p_ctxId     in ctxHandle
+  , p_name      in varchar2
+  , p_value     in varchar2
+  , p_scope     in sheetHandle default null
+  , p_comment   in varchar2 default null
+  , p_cellRef   in varchar2 default null
+  , p_refStyle  in pls_integer default null
+  )
+  is
+  begin
+    putNameImpl(p_ctxId, p_name, p_value, p_scope, p_cellRef, p_comment, refStyle => p_refStyle);
+  end;
+
   procedure putCellImpl (
     ctxId           in ctxHandle
   , sheetId         in sheetHandle
@@ -4566,6 +5073,7 @@ create or replace package body ExcelGen is
   , xfId            in pls_integer
   , anchorTableId   in tableHandle default null
   , anchorPosition  in pls_integer default null
+  , refStyle        in pls_integer default null
   )
   is
     cell   cell_t;
@@ -4582,6 +5090,9 @@ create or replace package body ExcelGen is
       cell.xfId := nvl(xfId, 0);
       cell.v := data;
       cell.isTableCell := false;
+      cell.f.expr := cell.v.varchar2_value;
+      cell.f.shared := false;
+      cell.f.refStyle := refStyle;
       currentCtx.sheetDefinitionMap(sheetId).data.rows(rowIdx).id := rowIdx;
       currentCtx.sheetDefinitionMap(sheetId).data.rows(rowIdx).cells(colIdx) := cell; 
     else   
@@ -4592,6 +5103,9 @@ create or replace package body ExcelGen is
       cell2.anchorRef.anchorPosition := anchorPosition;
       cell2.anchorRef.rowOffset := rowIdx;
       cell2.anchorRef.colOffset := colIdx;
+      cell2.fmla.expr := cell2.data.varchar2_value;
+      cell2.fmla.shared := false;
+      cell2.fmla.refStyle := refStyle;
       currentCtx.sheetDefinitionMap(sheetId).floatingCells.extend;
       idx := currentCtx.sheetDefinitionMap(sheetId).floatingCells.last;
       currentCtx.sheetDefinitionMap(sheetId).floatingCells(idx) := cell2; 
@@ -4669,6 +5183,25 @@ create or replace package body ExcelGen is
   exception
     when xml_parse_exception then
       error('Invalid XHTML fragment');
+  end;
+
+  procedure putFormulaCell (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowIdx          in pls_integer
+  , p_colIdx          in pls_integer
+  , p_value           in varchar2
+  , p_style           in cellStyleHandle default null 
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  , p_refStyle        in pls_integer default null
+  )
+  is
+    data  data_t;
+  begin
+    data.st := ST_FORMULA;
+    data.varchar2_value := p_value;
+    putCellImpl(p_ctxId, p_sheetId, p_rowIdx, p_colIdx, data, p_style, p_anchorTableId, p_anchorPosition, p_refStyle);
   end;
   
   procedure putCell (
@@ -5384,6 +5917,19 @@ $if NOT $$no_crypto OR $$no_crypto IS NULL $then
   end;
 $end
 
+  procedure setCellReferenceStyle (
+    p_ctxId     in ctxHandle
+  , p_refStyle  in pls_integer
+  )
+  is
+  begin
+    loadContext(p_ctxId);
+    if p_refStyle is null or p_refStyle not in (ExcelFmla.REF_A1, ExcelFmla.REF_R1C1) then
+      error('Invalid cell reference style');
+    end if;
+    currentCtx.workbook.refStyle := p_refStyle;
+  end;
+
   procedure setCoreProperties (
     p_ctxId        in ctxHandle
   , p_creator      in varchar2 default null
@@ -5423,18 +5969,45 @@ $end
   )
   return blob
   is
-    sheetIndex  pls_integer;
-    output      blob;
+    shHandle   sheetHandle;
+    shHandles  intList_t := intList_t();
+    sheet      ExcelTypes.CT_SheetBase;
+    sheets     ExcelTypes.CT_Sheets := ExcelTypes.CT_Sheets();
+    --sd         sheet_definition_t;
+    output     blob;
   begin
     loadContext(p_ctxId);
     -- shared styles
     addDefaultStyles(currentCtx.workbook.styles);
   
+    -- the following loop:
+    -- builds a collection of sheet handles
+    -- builds a collection of (sheetName, sheetIdx) tuples to be passed to the formula context
+    shHandle := currentCtx.sheetDefinitionMap.first;
+    while shHandle is not null loop
+      -- list of sheet handles
+      shHandles.extend;
+      sheet.idx := shHandles.last;
+      shHandles(sheet.idx) := shHandle;
+      -- get sheet definition
+      --sd := currentCtx.sheetDefinitionMap(shHandle);
+      
+      if not currentCtx.sheetDefinitionMap(shHandle).pageable then
+        sheet.name := currentCtx.sheetDefinitionMap(shHandle).sheetName;
+        sheets.extend;
+        sheets(sheets.last) := sheet;
+      end if;
+      
+      
+      shHandle := currentCtx.sheetDefinitionMap.next(shHandle);
+    end loop;
+    
+    -- formula context
+    ExcelFmla.setContext(sheets, currentCtx.names);
+    
     -- worksheets
-    sheetIndex := currentCtx.sheetDefinitionMap.first;
-    while sheetIndex is not null loop
-      createWorksheet(currentCtx, sheetIndex);
-      sheetIndex := currentCtx.sheetDefinitionMap.next(sheetIndex);
+    for i in 1 .. shHandles.count loop
+      createWorksheet(currentCtx, shHandles(i));
     end loop;
     
     -- workbook
