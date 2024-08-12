@@ -58,6 +58,7 @@ create or replace package ExcelGen is
     Marc Bleron       2023-09-02     Added p_maxRows to query-related routines
     Marc Bleron       2024-02-23     Added font strikethrough, text rotation, indent
     Marc Bleron       2024-05-10     Added sheet state, formula support
+    Marc Bleron       2024-07-21     Added hyperlink, excluded columns, table naming
 ====================================================================================== */
 
   -- file types
@@ -376,6 +377,35 @@ create or replace package ExcelGen is
   , p_refStyle  in pls_integer default null
   );
 
+  procedure addTableHyperlinkColumn (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_tableId         in tableHandle
+  , p_name            in varchar2
+  , p_location        in varchar2
+  , p_linkName        in varchar2 default null
+  );
+
+  procedure addTableHyperlinkColumnBefore (
+    p_ctxId      in ctxHandle
+  , p_sheetId    in sheetHandle
+  , p_tableId    in tableHandle
+  , p_name       in varchar2
+  , p_columnId   in pls_integer
+  , p_location   in varchar2
+  , p_linkName   in varchar2 default null
+  );
+  
+  procedure addTableHyperlinkColumnAfter (
+    p_ctxId      in ctxHandle
+  , p_sheetId    in sheetHandle
+  , p_tableId    in tableHandle
+  , p_name       in varchar2
+  , p_columnId   in pls_integer
+  , p_location   in varchar2
+  , p_linkName   in varchar2 default null
+  );
+
   procedure putDefinedName (
     p_ctxId     in ctxHandle
   , p_name      in varchar2
@@ -448,6 +478,18 @@ create or replace package ExcelGen is
   , p_rowIdx          in pls_integer
   , p_colIdx          in pls_integer
   , p_value           in anydata default null
+  , p_style           in cellStyleHandle default null 
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  );
+
+  procedure putHyperlinkCell (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowIdx          in pls_integer
+  , p_colIdx          in pls_integer
+  , p_location        in varchar2
+  , p_linkName        in varchar2 default null
   , p_style           in cellStyleHandle default null 
   , p_anchorTableId   in tableHandle default null
   , p_anchorPosition  in pls_integer default null
@@ -580,6 +622,7 @@ create or replace package ExcelGen is
   , p_showLastColumn     in boolean default false
   , p_showRowStripes     in boolean default true
   , p_showColumnStripes  in boolean default false
+  , p_tableName          in varchar2 default null
   );
 
   procedure setTableHeader (
