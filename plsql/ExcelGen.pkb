@@ -58,9 +58,10 @@ create or replace package body ExcelGen is
     Marc Bleron       2023-09-02     Added p_maxRows to query-related routines
     Marc Bleron       2024-02-23     Added font strikethrough, text rotation, indent
     Marc Bleron       2024-05-10     Added sheet state, formula support
+    Marc Bleron       2024-07-21     Added hyperlink, excluded columns, table naming
 ====================================================================================== */
 
-  VERSION_NUMBER     constant varchar2(16) := '4.0.0';
+  VERSION_NUMBER     constant varchar2(16) := '4.1.0';
 
   -- OPC part MIME types
   MT_STYLES          constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml';
@@ -152,7 +153,10 @@ create or replace package body ExcelGen is
   type range_t is record (expr varchar2(32), start_ref cell_ref_t, end_ref cell_ref_t);
   
   type intList_t is table of pls_integer;
-  type int_set_t is table of pls_integer index by pls_integer;
+  type intSet_t is table of pls_integer index by pls_integer;
+  type stringSet_t is table of pls_integer index by varchar2(512);
+  type valueSet_t is record (integers intSet_t, strings stringSet_t);
+  
   type link_token_map_t is table of varchar2(8) index by pls_integer;
   type link_t is record (target varchar2(2048), tooltip varchar2(256), tokens link_token_map_t, fmla varchar2(8192));
   --type link_rel_map_t is table of varchar2(256) index by varchar2(2048);
@@ -171,15 +175,15 @@ create or replace package body ExcelGen is
   , colRef   varchar2(3)
   , colNum   pls_integer
   , xfId     pls_integer := 0
-  , hasLink  boolean := false
-  , link     link_t
+  , hyperlink  boolean := false
+  , linkTokens  intList_t
   , supertype pls_integer
   , excluded  boolean := false
   , fmla      formula_t
   );
     
   type column_list_t is table of column_t;
-  --type column_map_t is table of pls_integer index by varchar2(128);
+  type column_map_t is table of pls_integer index by varchar2(128);
   type column_set_t is table of varchar2(3) index by pls_integer;
 
   type string_map_t is table of pls_integer index by varchar2(32767);
@@ -357,9 +361,10 @@ create or replace package body ExcelGen is
   , cursorNumber      integer
   , bindVariables     bind_variable_list_t
   , columnList        column_list_t
+  , columnMap         column_map_t
   , virtualColumns    virtualColumnList_t
   , visibleColumnSet  column_set_t
-  , excludeSet        int_set_t
+  , excludeSet        valueSet_t
   , partitionBySize   boolean := false
   , partitionSize     pls_integer
   , partitionId       pls_integer
@@ -396,13 +401,13 @@ create or replace package body ExcelGen is
   type rowProperties_map_t is table of rowProperties_t index by pls_integer;
   
   type cell_t is record (
-    r     pls_integer
-  , c     varchar2(3)
-  , cn    pls_integer
-  , xfId  pls_integer
-  , v     data_t
-  , f     formula_t
-  , link  link_t
+    r            pls_integer
+  , c            varchar2(3)
+  , cn           pls_integer
+  , xfId         pls_integer
+  , v            data_t
+  , f            formula_t
+  , hyperlink    boolean
   , isTableCell  boolean := false
   );
   
@@ -413,7 +418,14 @@ create or replace package body ExcelGen is
   
   type anchorRef_t is record (tableId pls_integer, anchorPosition pls_integer, rowOffset pls_integer, colOffset pls_integer);
   
-  type floatingCell_t is record (data data_t, xfId pls_integer, anchorRef anchorRef_t, fmla formula_t);
+  type floatingCell_t is record (
+    data       data_t
+  , xfId       pls_integer
+  , anchorRef  anchorRef_t
+  , fmla       formula_t
+  , hyperlink  boolean
+  );
+  
   type floatingCellList_t is table of floatingCell_t;
   
   type cellSpan_t is record (anchorRef anchorRef_t, rowSpan pls_integer, colSpan pls_integer);
@@ -426,6 +438,7 @@ create or replace package body ExcelGen is
     id                 pls_integer
   , header             table_header_t
   , formatAsTable      boolean
+  , tableName          varchar2(1024)
   , tableStyle         varchar2(32)
   , sqlMetadata        sql_metadata_t
   , columnLinkMap      link_map_t
@@ -509,6 +522,7 @@ create or replace package body ExcelGen is
   , coreProperties       coreProperties_t
   , names                ExcelTypes.CT_DefinedNames
   , nameMap              ExcelTypes.CT_DefinedNameMap
+  , tableNameSeq         pls_integer := 0
   );
   
   type context_cache_t is table of context_t index by pls_integer;
@@ -675,13 +689,13 @@ create or replace package body ExcelGen is
   end;
 
   function parseIntList (input in varchar2, sep in varchar2)
-  return int_set_t
+  return intSet_t
   is
     i       pls_integer;
     token   varchar2(256);
     p1      pls_integer := 1;
     p2      pls_integer;
-    output  int_set_t;
+    output  intSet_t;
   begin
     if input is not null then
       loop
@@ -705,6 +719,100 @@ create or replace package body ExcelGen is
       end loop;
     end if;
     return output;
+  end;
+
+  function parseValueList (
+    input  in varchar2
+  )
+  return valueSet_t
+  is
+  
+    vals  valueSet_t;
+    p1    pls_integer := 1;
+    p2    pls_integer;
+    token varchar2(512);
+    c     varchar2(1 char);
+    
+    i     pls_integer;
+    s     token%type;
+    
+    procedure skipws is
+    begin
+      while substr(input, p1, 1) = ' ' loop
+        p1 := p1 + 1;
+      end loop;
+    end;
+    
+  begin
+    
+    if input is not null then
+    
+      loop
+      
+        skipws;
+        
+        if substr(input, p1, 1) = '"' then
+          
+          p1 := p1 + 1;
+          p2 := instr(input, '"', p1); -- terminating quote
+          if p2 = 0 then
+            raise_application_error(-20000, utl_lms.format_message('Missing terminating quote'));
+          else
+            token := substr(input, p1, p2 - p1);
+            p1 := p2 + 1;
+            if token is not null then
+              vals.strings(token) := 1;
+            end if;
+          end if;
+          skipws;
+          c := substr(input, p1, 1);
+          if c = ',' then
+            p1 := p1 + 1;
+          elsif c is null then
+            exit;
+          else
+            raise_application_error(-20000, utl_lms.format_message('Unexpected character at position %d: ''%s''', p1, c));
+          end if;
+          
+        else
+          
+          p2 := instr(input, ',', p1);
+          if p2 = 0 then
+            token := rtrim(substr(input, p1));
+            if token is not null then
+              vals.integers(to_number(token)) := 1;
+            end if;
+            exit;
+          else
+            token := rtrim(substr(input, p1, p2 - p1));
+            if token is not null then
+              vals.integers(to_number(token)) := 1;
+            end if;
+            p1 := p2 + 1;
+          end if;
+          
+        end if;
+      
+      end loop;
+      
+      if debug_enabled then
+        s := vals.strings.first;
+        while s is not null loop
+          debug(s);
+          s := vals.strings.next(s);
+        end loop;
+        
+        i := vals.integers.first;
+        while i is not null loop
+          debug(i);
+          i := vals.integers.next(i);
+        end loop;
+      end if;
+    
+    end if;
+
+    return vals;
+      
   end;
 
   procedure insertAfter (t in out nocopy dbLinkedList_t, nodeId in pls_integer, newNodeId in pls_integer) is
@@ -1332,6 +1440,16 @@ create or replace package body ExcelGen is
     return ctx.workbook.styles.cellXfs(xfId);
   end;
 
+  function getCellStyleXf (
+    ctx   in context_t
+  , xfId  in pls_integer
+  )
+  return CT_Xf
+  is
+  begin
+    return ctx.workbook.styles.cellStyleXfs(xfId);
+  end;
+
   function getCellFont (
     ctx   in context_t
   , xfId  in pls_integer    
@@ -1497,7 +1615,31 @@ create or replace package body ExcelGen is
       return masterXfId;
     end if;
   end;
-
+  
+  function mergeLinkFont (
+    ctx       in out nocopy context_t
+  , linkXfId  in cellStyleHandle
+  , xfId      in cellStyleHandle
+  )
+  return cellStyleHandle
+  is
+    xf  CT_Xf;
+  begin
+    if xfId != 0 then
+      if linkXfId != 0 then
+        xf := getCellXf(ctx, xfId);
+        xf.xfId := linkXfId;
+        xf.fontId := getCellStyleXf(ctx, linkXfId).fontId;
+        setCellXfContent(xf);
+        return putCellXf(ctx.workbook.styles, xf);
+      else
+        return xfId;
+      end if;
+    else
+      return linkXfId;
+    end if;
+  end;
+  
   function setRangeBorders (
     xfId      in pls_integer
   , cellSpan  in cellSpan_t
@@ -1590,52 +1732,67 @@ create or replace package body ExcelGen is
   end;
 
   procedure prepareHyperlink (
-    target       in varchar2
+    meta         in out nocopy sql_metadata_t
   , ctxColumnId  in pls_integer
-  , columnList   in out nocopy column_list_t
-  --, stylesheet   in CT_Stylesheet
   )
   is
-    CTX_TOKEN     constant varchar2(8) := '{' || to_char(ctxColumnId) || '}';
-    token         varchar2(8);
-    link          link_t;
-    location      varchar2(2048);
-    columnId      pls_integer;
-    --numFmtId      pls_integer;
-  begin
-    link.target := nvl(target, CTX_TOKEN);
-    parseLink(link);
     
-    if link.target = CTX_TOKEN then
-      link.fmla := 'HYPERLINK(' || enquote(CTX_TOKEN) || ')';
-    else
-      location := enquote(link.target);
-      link.tokens(ctxColumnId) := CTX_TOKEN;
-      
-      if link.tokens.count != 0 then
-        
-        columnId := link.tokens.first;
-        while columnId is not null loop
-          token := link.tokens(columnId);
-          --numFmtId := stylesheet.cellXfs(columnList(columnId).xfId).numFmtId;
-          if columnId != ctxColumnId and not columnList(columnId).excluded then
-            location := replace(location, token, '"&' || token || '&"');
-          end if;
-          columnId := link.tokens.next(columnId);
-        end loop;
-      
-        -- clean up leading and trailing empty strings
-        location := regexp_replace(location, '^""&|&""$');
-      
+    col           column_t := meta.columnList(ctxColumnId);
+    tokenId       pls_integer := 0;
+    token         varchar2(128);
+    tokenMap      column_Map_t;
+    refColumnId   pls_integer;
+    refColumn     column_t;
+
+    function next_token return varchar2 is
+    begin
+      tokenId := tokenId + 1;
+      return regexp_substr(col.fmla.expr, '\$\{([^}]+)\}', 1, tokenId, null, 1);
+    end;
+    
+  begin
+    
+    -- parse tokens
+    token := next_token;
+    while token is not null loop
+      if meta.columnMap.exists(token) then
+        tokenMap(token) := meta.columnMap(token);
+      else
+        error('Unknown column name in hyperlink token: %s', token);
       end if;
-      
-      link.fmla := 'HYPERLINK(' || location || ',' 
-                                || case when columnList(ctxColumnId).supertype = ST_STRING then enquote(CTX_TOKEN) else CTX_TOKEN end || ')';
-      
+      token := next_token;  
+    end loop;
+    
+    col.linkTokens := intList_t();
+    
+    token := tokenMap.first;
+    while token is not null loop  
+      -- get column instance referenced by this token
+      refColumnId := tokenMap(token);
+      refColumn := meta.columnList(refColumnId);
+      if not(refColumn.excluded or refColumn.id = col.id) then
+        -- replace token occurrence(s) with the cell reference in R1C1 style
+        col.fmla.expr := replace(col.fmla.expr, '${'||token||'}', '"&RC['||to_char(refColumn.id - col.id)||']&"');
+      else
+        -- replace with a numeric token, a literal substitution will be performed later on when the actual column value is known
+        col.fmla.expr := replace(col.fmla.expr, '${'||token||'}', '${'||to_char(refColumnId)||'}');
+        col.linkTokens.extend;
+        col.linkTokens(col.linkTokens.last) := refColumnId;
+      end if;
+      token := tokenMap.next(token);
+    end loop;
+    
+    -- clean up leading and trailing empty strings
+    col.fmla.expr := regexp_replace(col.fmla.expr, '""&|&""');
+    debug(col.fmla.expr);
+    
+    -- having substitutable tokens make this formula unshareable
+    if col.linkTokens.count != 0 then
+      col.fmla.shared := false;
+      col.fmla.sharedIdx := null;
     end if;
     
-    columnList(ctxColumnId).link := link;
-    columnList(ctxColumnId).hasLink := true;
+    meta.columnList(ctxColumnId) := col;
     
   end;
   
@@ -1648,38 +1805,23 @@ create or replace package body ExcelGen is
     for i in 1 .. sd.tableList.count loop     
       columnId := sd.tableList(i).columnLinkMap.first;
       while columnId is not null loop       
-        prepareHyperlink(sd.tableList(i).columnLinkMap(columnId), columnId, sd.tableList(i).sqlMetadata.columnList);     
+        --prepareHyperlink(sd.tableList(i).columnLinkMap(columnId), columnId, sd.tableList(i).sqlMetadata.columnList);     
         columnId := sd.tableList(i).columnLinkMap.next(columnId);
       end loop;
     end loop;
   end;
 
-  function makeHyperlinkFormula (
-    link         in link_t
-  , ctxRowId     in pls_integer
-  , ctxColumnId  in pls_integer
-  , columnList   in column_list_t
-  , dataMap      in data_map_t
+  procedure setLinkTokenValues (
+    expr     in out nocopy varchar2
+  , tokens   in intList_t
+  , dataMap  in data_map_t
   )
-  return varchar2
   is
-    fmla  varchar2(8192) := link.fmla;
-    columnId  pls_integer;
   begin
-    if link.tokens.count != 0 then
-      columnId := link.tokens.first;
-      while columnId is not null loop
-        fmla := replace( fmla
-                       , link.tokens(columnId)
-                       , case when columnId = ctxColumnId or columnList(columnId).excluded then escapeQuote(dataMap(columnId).varchar2_value) 
-                              else columnList(columnId).colRef||to_char(ctxRowId) 
-                                end
-                       );
-        columnId := link.tokens.next(columnId);
-      end loop;
-    end if;
-    debug(fmla);
-    return fmla;
+    for i in 1 .. tokens.count loop
+      expr := replace(expr, '${'||to_char(tokens(i))||'}', dataMap(tokens(i)).varchar2_value);
+    end loop;
+    debug(expr);
   end;
 
   function newStylesheet
@@ -1874,9 +2016,9 @@ create or replace package body ExcelGen is
   end;
 
   function getColumnList (
-    p_cursor_number  in integer
-  , p_excludeSet     in int_set_t
-  , p_offset         in pls_integer
+    p_cursor_number   in integer
+  , p_excludeSet      in valueSet_t
+  , p_offset          in pls_integer
   , p_virtualColumns  in virtualColumnList_t
   )
   return column_list_t
@@ -1887,7 +2029,7 @@ create or replace package body ExcelGen is
     columnList      column_list_t := column_list_t();
     COLUMN_DEFAULT  column_t;
     col             column_t;
-    columnId        pls_integer := 0;
+    columnSeq       pls_integer := 0;
     cols            dbLinkedList_t;
     vc              virtualColumn_t;
     nodeId          pls_integer;
@@ -1951,7 +2093,7 @@ create or replace package body ExcelGen is
       col.type := dbColumnList(i).col_type;
       col.scale := dbColumnList(i).col_scale;
       --col.hasLink := false;
-      col.excluded := p_excludeSet.exists(i);
+      col.excluded := ( p_excludeSet.integers.exists(i) or p_excludeSet.strings.exists(col.name) );
       
       insertLast(cols, node(col));
       
@@ -1973,21 +2115,20 @@ create or replace package body ExcelGen is
     
     end loop;
     
-    columnId := 0;
     nodeId := cols.first;
     while nodeId is not null loop
       
       col := cols.heap(nodeId).data;
       
       if not col.excluded then
-        columnId := columnId + 1;
-        col.id := columnId;
-        col.colNum := p_offset - 1 + columnId;
+        columnSeq := columnSeq + 1;
+        col.id := columnSeq;
+        col.colNum := p_offset - 1 + columnSeq;
         col.colRef := base26encode(col.colNum);
       end if;
       
       columnList.extend;
-      columnList(columnId) := col;
+      columnList(columnList.last) := col;
       
       nodeId := cols.heap(nodeId).next;
       
@@ -2035,6 +2176,7 @@ create or replace package body ExcelGen is
     meta.columnList := getColumnList(meta.cursorNumber, meta.excludeSet, colOffset, meta.virtualColumns);
     
     for i in 1 .. meta.columnList.count loop
+      meta.columnMap(meta.columnList(i).name) := i;
       if not meta.columnList(i).excluded then
         meta.visibleColumnSet(i) := meta.columnList(i).colRef;
       end if;
@@ -2385,14 +2527,14 @@ create or replace package body ExcelGen is
   end;
 
   function addTableLayout (
-    ctx              in out nocopy context_t
-  , tableRange       in range_t
-  , showHeader       in boolean
-  , tableAutoFilter  in boolean
-  , tableStyleName   in varchar2
-  , columnMap        in table_column_map_t
-  , tableName        in varchar2 default null
-  , isEmpty          in boolean default false
+    ctx                in out nocopy context_t
+  , tableRange         in range_t
+  , showHeader         in boolean
+  , tableAutoFilter    in boolean
+  , tableStyleName     in varchar2
+  , columnMap          in table_column_map_t
+  , tableName          in varchar2 default null
+  , isEmpty            in boolean default false
   , showFirstColumn    in boolean
   , showLastColumn     in boolean
   , showRowStripes     in boolean
@@ -2400,10 +2542,19 @@ create or replace package body ExcelGen is
   )
   return pls_integer
   is
-    tab  CT_Table;
+    tab      CT_Table;
   begin
     tab.id := nvl(ctx.workbook.tables.last, 0) + 1;
-    tab.name := nvl(tableName, 'Table'||to_char(tab.id));
+    if tableName is null then  
+      loop
+        ctx.tableNameSeq := ctx.tableNameSeq + 1;
+        tab.name := 'Table'||to_char(ctx.tableNameSeq);
+        exit when not ctx.nameMap.exists(upper(tab.name));
+      end loop;
+      ctx.nameMap(upper(tab.name)) := null;
+    else
+      tab.name := tableName;
+    end if;
     -- if the table is declared over an empty dataset, extends its range by one row down to make it legal in Excel
     if isEmpty then
       tab.ref := makeRange(tableRange.start_ref.c, tableRange.start_ref.r, tableRange.end_ref.c, tableRange.end_ref.r + 1);
@@ -2496,8 +2647,6 @@ create or replace package body ExcelGen is
       -- new master cell xf using this font
       styleXfId := putCellStyleXf(styles, makeCellXf(styles, null, font => hlinkFont)); -- master cell xf
       styles.hlinkXfId := styleXfId;
-      -- new cell xf derived from master (moved to createWorksheet)
-      -- styles.hlinkXfId := putCellXf(styles, makeCellXf(styles, styleXfId));
       -- new named cell style for builtinId 8 (= hyperlink style)
       putNamedCellStyle(styles, 'Hyperlink', styleXfId, 8);
     end if;
@@ -2812,7 +2961,6 @@ create or replace package body ExcelGen is
   is
     cellRef  varchar2(10) := cell.c||to_char(cell.r);
     sst_idx  pls_integer;
-    --hasLink  boolean := ( cell.link.target is not null );
   begin
 
     case cell.v.st
@@ -3094,7 +3242,6 @@ create or replace package body ExcelGen is
     rowIdx          pls_integer;
     colIdx          pls_integer;
     columnId        pls_integer;
-    --cellHasLink     boolean;
     r               row_t;
     cell            cell_t;
     cell2           floatingCell_t;
@@ -3111,18 +3258,6 @@ create or replace package body ExcelGen is
     
     isSheetEmpty    boolean := true;
     headerXfId      pls_integer;
-    --link            link_t;
-    
-    /*
-    function makeHyperlinkCellContent (columnId in pls_integer, strValue in varchar2) return varchar2 is
-    begin
-      return '<c r="'||cellRef||'" '
-                     ||case when t.sqlMetadata.columnList(columnId).supertype = ST_STRING then 't="str" ' end
-                     ||'s="'||to_char(cellXfId)||'"><f>'
-                     ||dbms_xmlgen.convert(makeHyperlinkFormula(link, rowIdx, columnId, t.sqlMetadata.columnList, r.dataMap))
-                     ||'</f><v>'||dbms_xmlgen.convert(strValue)||'</v></c>' ;
-    end;
-    */
     
   begin
     
@@ -3285,6 +3420,11 @@ create or replace package body ExcelGen is
             -- (shared) formula
             if cell.v.st = ST_FORMULA then
               cell.f := t.sqlMetadata.columnList(i).fmla;
+              
+              if t.sqlMetadata.columnList(i).hyperlink and t.sqlMetadata.columnList(i).linkTokens.count != 0 then
+                setLinkTokenValues(cell.f.expr, t.sqlMetadata.columnList(i).linkTokens, dataMap);
+              end if;
+              
               if cell.f.shared then
                 if not sd.sharedFmlaMap.exists(cell.f.sharedIdx) then
                   sd.sharedFmlaMap(cell.f.sharedIdx).columnId := i;
@@ -3293,8 +3433,8 @@ create or replace package body ExcelGen is
                 else
                   cell.f.hasRef := false;
                 end if;
-              else
-                cell.f := null;
+              --else
+              --  cell.f := null;
               end if;
             end if;
             
@@ -3347,7 +3487,7 @@ create or replace package body ExcelGen is
                          , cell.r);
     
       if t.formatAsTable and not isSheetEmpty then
-        tableId := addTableLayout(ctx, t.range, t.header.show, t.header.autoFilter, t.tableStyle, t.columnMap, null, t.isEmpty
+        tableId := addTableLayout(ctx, t.range, t.header.show, t.header.autoFilter, t.tableStyle, t.columnMap, t.tableName, t.isEmpty
                                  , t.showFirstColumn, t.showLastColumn, t.showRowStripes, t.showColumnStripes);
         sheet.tableParts.extend;
         sheet.tableParts(sheet.tableParts.last) := tableId;
@@ -3371,6 +3511,7 @@ create or replace package body ExcelGen is
       cell.xfId := cell2.xfId;    
       cell.v := cell2.data;
       cell.f := cell2.fmla;
+      cell.hyperlink := cell2.hyperlink;
       sd.data.rows(cell.r).id := cell.r;
       sd.data.rows(cell.r).cells(cell.cn) := cell;
     end loop;
@@ -3414,6 +3555,11 @@ create or replace package body ExcelGen is
           -- inherit row-level style
           if sd.data.rows(rowIdx).props.xfId is not null then
             cell.xfId := mergeCellStyle(ctx, sd.data.rows(rowIdx).props.xfId, cell.xfId);
+          end if;
+          
+          -- master hyperlink style
+          if cell.hyperlink then
+            cell.xfId := mergeLinkFont(ctx, ctx.workbook.styles.hlinkXfId, cell.xfId);
           end if;
           
           writeCell(ctx, stream, cell);
@@ -3745,6 +3891,11 @@ create or replace package body ExcelGen is
             -- (shared) formula
             if cell.v.st = ST_FORMULA then
               cell.f := t.sqlMetadata.columnList(i).fmla;
+
+              if t.sqlMetadata.columnList(i).hyperlink and t.sqlMetadata.columnList(i).linkTokens.count != 0 then
+                setLinkTokenValues(cell.f.expr, t.sqlMetadata.columnList(i).linkTokens, dataMap);
+              end if;
+              
               if cell.f.shared then
                 if not sd.sharedFmlaMap.exists(cell.f.sharedIdx) then
                   sd.sharedFmlaMap(cell.f.sharedIdx).columnId := i;
@@ -3753,8 +3904,8 @@ create or replace package body ExcelGen is
                 else
                   cell.f.hasRef := false;
                 end if;
-              else
-                cell.f := null;
+              --else
+              --  cell.f := null;
               end if;
             end if;
             
@@ -3803,7 +3954,7 @@ create or replace package body ExcelGen is
                          , cell.r);
 
       if t.formatAsTable and not isSheetEmpty then
-        tableId := addTableLayout(ctx, t.range, t.header.show, t.header.autoFilter, t.tableStyle, t.columnMap, null, t.isEmpty
+        tableId := addTableLayout(ctx, t.range, t.header.show, t.header.autoFilter, t.tableStyle, t.columnMap, t.tableName, t.isEmpty
                                  , t.showFirstColumn, t.showLastColumn, t.showRowStripes, t.showColumnStripes);
         sheet.tableParts.extend;
         sheet.tableParts(sheet.tableParts.last) := tableId;
@@ -3827,6 +3978,7 @@ create or replace package body ExcelGen is
       cell.xfId := cell2.xfId;    
       cell.v := cell2.data;
       cell.f := cell2.fmla;
+      cell.hyperlink := cell2.hyperlink;
       sd.data.rows(cell.r).id := cell.r;
       sd.data.rows(cell.r).cells(cell.cn) := cell;
     end loop;
@@ -3870,6 +4022,11 @@ create or replace package body ExcelGen is
           -- inherit row-level style
           if sd.data.rows(rowIdx).props.xfId is not null then
             cell.xfId := mergeCellStyle(ctx, sd.data.rows(rowIdx).props.xfId, cell.xfId);
+          end if;
+
+          -- master hyperlink style
+          if cell.hyperlink then
+            cell.xfId := mergeLinkFont(ctx, ctx.workbook.styles.hlinkXfId, cell.xfId);
           end if;
 
           writeCellBin(ctx, stream, cell);
@@ -4087,9 +4244,10 @@ create or replace package body ExcelGen is
         end if;
             
         -- if defined on this column, apply hyperlink master style and font
-        if sd.tableList(i).columnLinkMap.exists(columnId) then
+        if sd.tableList(i).sqlMetadata.columnList(j).hyperlink then
           cellXf.xfId := ctx.workbook.styles.hlinkXfId;
           cellXf.fontId := ctx.workbook.styles.cellStyleXfs(cellXf.xfId).fontId;
+          prepareHyperlink(sd.tableList(i).sqlMetadata, j);
         else
           cellXf.xfId := 0; -- Normal style
         end if;
@@ -4147,7 +4305,7 @@ create or replace package body ExcelGen is
     end loop;
     
     -- hyperlinks
-    prepareHyperlinks(sd);
+    --prepareHyperlinks(sd);
     
     sd.streamable := ( sd.tableList.count = 1 
                    and sd.data.rows.count = 0 
@@ -4664,7 +4822,7 @@ create or replace package body ExcelGen is
     end if;
     
     t.sqlMetadata.virtualColumns := virtualColumnList_t();
-    t.sqlMetadata.excludeSet := parseIntList(p_excludeCols, ',');
+    t.sqlMetadata.excludeSet := parseValueList(p_excludeCols);
     t.sqlMetadata.maxRows := p_maxRows;
     
     sd.tableList.extend;
@@ -4982,6 +5140,7 @@ create or replace package body ExcelGen is
   , p_columnId        in pls_integer
   , p_after           in boolean
   , p_refStyle        in pls_integer default null
+  , p_hyperlink       in boolean default false
   )
   is
     t      table_t;
@@ -4996,6 +5155,7 @@ create or replace package body ExcelGen is
     vc.col.fmla.expr := p_value;
     vc.col.fmla.shared := true;
     vc.col.fmla.refStyle := p_refStyle;
+    vc.col.hyperlink := nvl(p_hyperlink, false);
     
     vc.col.fmla.sharedIdx := currentCtx.sheetDefinitionMap(p_sheetId).sharedFmlaSeq;
     currentCtx.sheetDefinitionMap(p_sheetId).sharedFmlaSeq := vc.col.fmla.sharedIdx + 1;
@@ -5005,6 +5165,10 @@ create or replace package body ExcelGen is
     
     t.sqlMetadata.virtualColumns.extend;
     t.sqlMetadata.virtualColumns(t.sqlMetadata.virtualColumns.last) := vc;
+    
+    if vc.col.hyperlink then
+      currentCtx.workbook.styles.hasHlink := true;
+    end if;
     
     currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId) := t;
   end;
@@ -5050,6 +5214,85 @@ create or replace package body ExcelGen is
     addTableColumnImpl(p_ctxId, p_sheetId, p_tableId, p_name, p_value, p_columnId, true, p_refStyle);
   end;
 
+  procedure addTableHyperlinkColImpl (
+    p_ctxId     in ctxHandle
+  , p_sheetId   in sheetHandle
+  , p_tableId   in tableHandle
+  , p_name      in varchar2
+  , p_location  in varchar2
+  , p_linkName  in varchar2
+  , p_columnId  in pls_integer
+  , p_after     in boolean
+  )
+  is
+    fmla      varchar2(32767);
+  begin
+    if p_location is not null then
+      fmla := 'HYPERLINK(' || enquote(p_location);
+      if p_name is not null then
+        fmla := fmla || ',' || enquote(p_linkName);
+      end if;
+      fmla := fmla || ')';
+    else
+      error('Location parameter cannot be null');
+    end if;
+    addTableColumnImpl(p_ctxId, p_sheetId, p_tableId, p_name, fmla, p_columnId, p_after, ExcelFmla.REF_R1C1, true);
+  end;
+
+  procedure addTableHyperlinkColumn (
+    p_ctxId     in ctxHandle
+  , p_sheetId   in sheetHandle
+  , p_tableId   in tableHandle
+  , p_name      in varchar2
+  , p_location  in varchar2
+  , p_linkName  in varchar2 default null
+  )
+  is
+  begin
+    addTableHyperlinkColImpl(p_ctxId, p_sheetId, p_tableId, p_name, p_location, p_linkName, null, null);
+  end;
+
+  procedure addTableHyperlinkColumnBefore (
+    p_ctxId      in ctxHandle
+  , p_sheetId    in sheetHandle
+  , p_tableId    in tableHandle
+  , p_name       in varchar2
+  , p_columnId   in pls_integer
+  , p_location   in varchar2
+  , p_linkName   in varchar2 default null
+  )
+  is
+  begin
+    addTableHyperlinkColImpl(p_ctxId, p_sheetId, p_tableId, p_name, p_location, p_linkName, p_columnId, false);
+  end;
+
+  procedure addTableHyperlinkColumnAfter (
+    p_ctxId      in ctxHandle
+  , p_sheetId    in sheetHandle
+  , p_tableId    in tableHandle
+  , p_name       in varchar2
+  , p_columnId   in pls_integer
+  , p_location   in varchar2
+  , p_linkName   in varchar2 default null
+  )
+  is
+  begin
+    addTableHyperlinkColImpl(p_ctxId, p_sheetId, p_tableId, p_name, p_location, p_linkName, p_columnId, true);
+  end;
+  /*
+  procedure setTableColumnHyperlink (
+    p_ctxId      in ctxHandle
+  , p_sheetId    in sheetHandle
+  , p_tableId    in tableHandle
+  , p_columnId   in pls_integer
+  , p_location   in varchar2 default null
+  , p_linkName   in varchar2 default null
+  )
+  is
+  begin
+    null;
+  end;
+  */
   procedure putDefinedName (
     p_ctxId     in ctxHandle
   , p_name      in varchar2
@@ -5074,6 +5317,7 @@ create or replace package body ExcelGen is
   , anchorTableId   in tableHandle default null
   , anchorPosition  in pls_integer default null
   , refStyle        in pls_integer default null
+  , hyperlink       in boolean default false
   )
   is
     cell   cell_t;
@@ -5081,6 +5325,9 @@ create or replace package body ExcelGen is
     idx    pls_integer;
   begin
     loadContext(ctxId);
+    if hyperlink then
+      currentCtx.workbook.styles.hasHlink := true;
+    end if;
     if anchorTableId is null then
       assertPositive(rowIdx, 'The cell row must be a positive integer.');
       assertPositive(colIdx, 'The cell column must be a positive integer.');
@@ -5089,10 +5336,13 @@ create or replace package body ExcelGen is
       cell.c := base26encode(cell.cn);
       cell.xfId := nvl(xfId, 0);
       cell.v := data;
+      cell.hyperlink := hyperlink;
       cell.isTableCell := false;
-      cell.f.expr := cell.v.varchar2_value;
-      cell.f.shared := false;
-      cell.f.refStyle := refStyle;
+      if data.st = ST_FORMULA then
+        cell.f.expr := cell.v.varchar2_value;
+        cell.f.shared := false;
+        cell.f.refStyle := refStyle;
+      end if;
       currentCtx.sheetDefinitionMap(sheetId).data.rows(rowIdx).id := rowIdx;
       currentCtx.sheetDefinitionMap(sheetId).data.rows(rowIdx).cells(colIdx) := cell; 
     else   
@@ -5103,9 +5353,12 @@ create or replace package body ExcelGen is
       cell2.anchorRef.anchorPosition := anchorPosition;
       cell2.anchorRef.rowOffset := rowIdx;
       cell2.anchorRef.colOffset := colIdx;
-      cell2.fmla.expr := cell2.data.varchar2_value;
-      cell2.fmla.shared := false;
-      cell2.fmla.refStyle := refStyle;
+      if data.st = ST_FORMULA then
+        cell2.fmla.expr := cell2.data.varchar2_value;
+        cell2.fmla.shared := false;
+        cell2.fmla.refStyle := refStyle;
+      end if;
+      cell2.hyperlink := hyperlink;
       currentCtx.sheetDefinitionMap(sheetId).floatingCells.extend;
       idx := currentCtx.sheetDefinitionMap(sheetId).floatingCells.last;
       currentCtx.sheetDefinitionMap(sheetId).floatingCells(idx) := cell2; 
@@ -5202,6 +5455,39 @@ create or replace package body ExcelGen is
     data.st := ST_FORMULA;
     data.varchar2_value := p_value;
     putCellImpl(p_ctxId, p_sheetId, p_rowIdx, p_colIdx, data, p_style, p_anchorTableId, p_anchorPosition, p_refStyle);
+  end;
+
+  procedure putHyperlinkCell (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowIdx          in pls_integer
+  , p_colIdx          in pls_integer
+  , p_location        in varchar2
+  , p_linkName        in varchar2 default null
+  , p_style           in cellStyleHandle default null 
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  )
+  is
+    fmla  varchar2(32767);
+    data  data_t;
+  begin
+    if p_location is not null then
+      fmla := 'HYPERLINK(' || enquote(p_location);
+      if p_linkName is not null then
+        fmla := fmla || ',' || enquote(p_linkName);
+      end if;
+      fmla := fmla || ')';
+    else
+      error('Location parameter cannot be null');
+    end if;
+    
+    data.st := ST_FORMULA;
+    data.varchar2_value := fmla;
+    
+    --putFormulaCell(p_ctxId, p_sheetId, p_rowIdx, p_colIdx, fmla, xfId, p_anchorTableId, p_anchorPosition);
+    putCellImpl(p_ctxId, p_sheetId, p_rowIdx, p_colIdx, data, p_style, p_anchorTableId, p_anchorPosition, hyperlink => true);
+    
   end;
   
   procedure putCell (
@@ -5530,8 +5816,10 @@ create or replace package body ExcelGen is
   , p_showLastColumn     in boolean default false
   , p_showRowStripes     in boolean default true
   , p_showColumnStripes  in boolean default false
+  , p_tableName          in varchar2 default null
   )
   is
+    nameKey  varchar2(2048);
   begin
     loadContext(p_ctxId);
     assertTableExists(p_sheetId, p_tableId);
@@ -5541,6 +5829,19 @@ create or replace package body ExcelGen is
     currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).showLastColumn := p_showLastColumn;
     currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).showRowStripes := p_showRowStripes;
     currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).showColumnStripes := p_showColumnStripes;
+    
+    if p_tableName is not null then
+      nameKey := upper(p_tableName);
+      -- table and defined names must be unique
+      if currentCtx.nameMap.exists(nameKey) then
+        error('Name already exists: %s', p_tableName);
+      else
+        -- add a map entry for this name
+        currentCtx.nameMap(nameKey) := null;
+        currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).tableName := p_tableName;
+      end if;
+    end if;
+    
   end;
 
   -- DEPRECATED
@@ -5556,9 +5857,9 @@ create or replace package body ExcelGen is
   end;
 
   procedure setTableFormat (
-    p_ctxId    in ctxHandle
-  , p_sheetId  in sheetHandle
-  , p_style    in varchar2 default null
+    p_ctxId      in ctxHandle
+  , p_sheetId    in sheetHandle
+  , p_style      in varchar2 default null
   )
   is
     tableId  pls_integer;

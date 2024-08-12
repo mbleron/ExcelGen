@@ -1,5 +1,13 @@
 # Change Log
 
+## [4.1] - 2024-08-12
+
+### Added
+
+* Hyperlink support (#6)
+* Excluded columns (#52)
+* Table naming
+
 ## [4.0] - 2024-06-25
 
 ### Added

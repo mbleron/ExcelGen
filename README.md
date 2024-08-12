@@ -121,6 +121,9 @@ For simple requirements such as a single-table sheet, shortcut procedures and fu
   * [addTableColumn](#addtablecolumn-procedure)
   * [addTableColumnBefore](#addtablecolumnbefore-procedure)
   * [addTableColumnAfter](#addtablecolumnafter-procedure)
+  * [addTableHyperlinkColumn](#addtablehyperlinkcolumn-procedure)
+  * [addTableHyperlinkColumnBefore](#addtablehyperlinkcolumnbefore-procedure)
+  * [addTableHyperlinkColumnAfter](#addtablehyperlinkcolumnafter-procedure)
   * [getRowCount](#getrowcount-function)
 * Cell management
   * [putCell](#putcell-procedure)
@@ -231,6 +234,7 @@ function addTable (
 , p_anchorTableId    in tableHandle default null
 , p_anchorPosition   in pls_integer default null
 , p_maxRows          in integer default null
+, p_excludeCols      in varchar2 default null
 )
 return tableHandle;
 ```
@@ -246,6 +250,7 @@ function addTable (
 , p_anchorTableId    in tableHandle default null
 , p_anchorPosition   in pls_integer default null
 , p_maxRows          in integer default null
+, p_excludeCols      in varchar2 default null
 )
 return tableHandle;
 ```
@@ -261,6 +266,7 @@ function addTable (
 , p_anchorTableId    in tableHandle default null
 , p_anchorPosition   in pls_integer default null
 , p_maxRows          in integer default null
+, p_excludeCols      in varchar2 default null
 )
 return tableHandle;
 ```
@@ -278,6 +284,7 @@ Parameter|Description|Mandatory
 `p_anchorTableId`|Handle of the anchor table.|No
 `p_anchorPosition`|Position in the anchor table from which row and column offsets are applied. <br>One of `TOP_LEFT`, `TOP_RIGHT`, `BOTTOM_RIGHT`, `BOTTOM_LEFT`.|No
 `p_maxRows`|Maximum number of rows to fetch from the underlying query. <br/>If set to NULL, no limit is applied except Excel sheet limit (unless pagination is enabled).|No
+`p_excludeCols`|A comma-separated list of column indices and/or names to exclude from the SQL query result in the spreadsheet output. <br/>Excluded column values are still accessible internally, to be referenced in an hyperlink expression. <br/>Column names are case-sensitive and must be enclosed within quotation marks, e.g. `'1, 2, "MY_COLUMN"'`.|No
 
 **Notes :**  
 Allowed SQL column data types are : 
@@ -464,6 +471,7 @@ procedure addSheetFromQuery (
 , p_sheetIndex  in pls_integer default null
 , p_maxRows     in integer default null
 , p_state       in pls_integer default null
+, p_excludeCols in varchar2 default null
 );
 ```
 ```sql
@@ -477,6 +485,7 @@ procedure addSheetFromQuery (
 , p_sheetIndex  in pls_integer default null
 , p_maxRows     in integer default null
 , p_state       in pls_integer default null
+, p_excludeCols in varchar2 default null
 );
 ```
 ```sql
@@ -490,6 +499,7 @@ function addSheetFromQuery (
 , p_sheetIndex  in pls_integer default null
 , p_maxRows     in integer default null
 , p_state       in pls_integer default null
+, p_excludeCols in varchar2 default null
 )
 return sheetHandle;
 ```
@@ -504,6 +514,7 @@ function addSheetFromQuery (
 , p_sheetIndex  in pls_integer default null
 , p_maxRows     in integer default null
 , p_state       in pls_integer default null
+, p_excludeCols in varchar2 default null
 )
 return sheetHandle;
 ```
@@ -519,6 +530,7 @@ Parameter|Description|Mandatory
 `p_sheetIndex`|Cf. [addSheet](#addsheet-function).|No
 `p_maxRows`|Cf. [addTable](#addtable-function).|No
 `p_state`|Cf. [addSheet](#addsheet-function).|No
+`p_excludeCols`|Cf. [addTable](#addtable-function).|No
 
 ---
 ### addSheetFromCursor procedure and function
@@ -537,6 +549,7 @@ procedure addSheetFromCursor (
 , p_sheetIndex  in pls_integer default null
 , p_maxRows     in integer default null
 , p_state       in pls_integer default null
+, p_excludeCols in varchar2 default null
 );
 ```
 ```sql
@@ -550,6 +563,7 @@ function addSheetFromCursor (
 , p_sheetIndex  in pls_integer default null
 , p_maxRows     in integer default null
 , p_state       in pls_integer default null
+, p_excludeCols in varchar2 default null
 )
 return sheetHandle;
 ```
@@ -565,6 +579,7 @@ Parameter|Description|Mandatory
 `p_sheetIndex`|Cf. [addSheet](#addsheet-function).|No
 `p_maxRows`|Cf. [addTable](#addtable-function).|No
 `p_state`|Cf. [addSheet](#addsheet-function).|No
+`p_excludeCols`|Cf. [addTable](#addtable-function).|No
 
 ---
 ### setBindVariable procedure
@@ -758,6 +773,7 @@ procedure setTableProperties (
 , p_showLastColumn     in boolean default false
 , p_showRowStripes     in boolean default true
 , p_showColumnStripes  in boolean default false
+, p_tableName          in varchar2 default null
 );
 ```
 
@@ -771,6 +787,7 @@ Parameter|Description|Mandatory
 `p_showLastColumn`|Highlight last column of the table. Default is `false`.|No
 `p_showRowStripes`|Hide or show row stripes. Default is `true` (show).|No
 `p_showColumnStripes`|Hide or show column stripes. Default is `false` (hide).|No
+`p_tableName`|Table name. <br/>Must be unique among all tables and other names defined in the workbook. If NULL, a system-generated name will be assigned to this table at creation time.|No
 
 ---
 ### setTableHeader procedure
@@ -817,7 +834,7 @@ Parameter|Description|Mandatory
 `p_ctxId`|Context handle.|Yes
 `p_sheetId`|Sheet handle.|Yes
 `p_tableId`|Table handle.|Yes
-`p_columnId`|Column index.|Yes
+`p_columnId`|Column index, referring to its position in the list of visible table columns. <br/>This value might differ from the original index in the SQL source if other columns have been excluded or added afterwards.|Yes
 `p_columnName`|Column name.|No
 `p_style`|Cell style handle created via [makeCellStyle](#makecellstyle-function) or [makeCellStyleCss](#makecellstylecss-function) function.|No
 `p_headerStyle`|Header cell style handle created via [makeCellStyle](#makecellstyle-function) or [makeCellStyleCss](#makecellstylecss-function) function. <br/>This style inherits from the table header style defined via [setTableHeader](#settableheader-procedure) procedure, in priority to higher-level settings (sheet column, sheet or workbook).|No
@@ -841,7 +858,7 @@ Parameter|Description|Mandatory
 `p_ctxId`|Context handle.|Yes
 `p_sheetId`|Sheet handle.|Yes
 `p_tableId`|Table handle.|Yes
-`p_columnId`|Column index.|Yes
+`p_columnId`|Column index. See [setTableColumnProperties](#settablecolumnproperties-procedure).|Yes
 `p_format`|Format string. <br/>It takes precedence over existing settings for NUMBER, DATE or TIMESTAMP data types at workbook, sheet and sheet column level. <br/>The format must follow MS Excel proprietary [syntax](https://support.microsoft.com/en-us/office/create-a-custom-number-format-78f2a361-936b-4c03-8772-09fab54be7f4).  |Yes
 
 ---
@@ -914,7 +931,7 @@ Parameter|Description|Mandatory
 `p_tableId`|Table handle.|Yes
 `p_name`|Column name.|Yes
 `p_value`|Formula string.|Yes
-`p_columnId`|Column index before which to insert the new column.|Yes
+`p_columnId`|Column index before which to insert the new column. The index may refer to an excluded column (see [addTable](#addtable-function)).|Yes
 `p_refStyle`|Cell reference style.|No
 
 ---
@@ -940,8 +957,90 @@ Parameter|Description|Mandatory
 `p_tableId`|Table handle.|Yes
 `p_name`|Column name.|Yes
 `p_value`|Formula string.|Yes
-`p_columnId`|Column index after which to insert the new column.|Yes
+`p_columnId`|Column index after which to insert the new column. The index may refer to an excluded column (see [addTable](#addtable-function)).|Yes
 `p_refStyle`|Cell reference style.|No
+
+---
+### addTableHyperlinkColumn procedure
+This procedure adds a new hyperlink column to a given table.  
+The column is added at the end of the existing column list
+
+```sql
+procedure addTableHyperlinkColumn (
+  p_ctxId     in ctxHandle
+, p_sheetId   in sheetHandle
+, p_tableId   in tableHandle
+, p_name      in varchar2
+, p_location  in varchar2
+, p_linkName  in varchar2 default null
+)
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
+`p_tableId`|Table handle.|Yes
+`p_name`|Column name.|Yes
+`p_location`|Hyperlink target. May be parameterized (see below).|Yes
+`p_linkName`|Friendly name. May be parameterized (see below).|No
+
+Internally, ExcelGen creates a new formula-based column using [HYPERLINK](https://support.microsoft.com/en-us/office/hyperlink-function-333c7ce6-c5ae-4164-9c47-7de9b76f577f) function.  
+In a table context, we may want the link target or link name to depend on values from other columns in the same row. To achieve that easily, the `p_location` and `p_linkName` parameters allow placeholders for other columns. A placeholder may reference an excluded column.  
+Example:  
+`'https://www.google.com/search?q=${MY_COLUMN_1}'`
+
+---
+### addTableHyperlinkColumnBefore procedure
+This procedure adds a new hyperlink column to a given table, before a given column.
+
+```sql
+procedure addTableHyperlinkColumnBefore (
+  p_ctxId      in ctxHandle
+, p_sheetId    in sheetHandle
+, p_tableId    in tableHandle
+, p_name       in varchar2
+, p_columnId   in pls_integer
+, p_location   in varchar2
+, p_linkName   in varchar2 default null
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
+`p_tableId`|Table handle.|Yes
+`p_name`|Column name.|Yes
+`p_columnId`|See [addTableColumnBefore](#addtablecolumnbefore-procedure).|Yes
+`p_location`|See [addTableHyperlinkColumn](#addtablehyperlinkcolumn-procedure).|Yes
+`p_linkName`|See [addTableHyperlinkColumn](#addtablehyperlinkcolumn-procedure).|No
+
+---
+### addTableHyperlinkColumnAfter procedure
+This procedure adds a new hyperlink column to a given table, after a given column.
+
+```sql
+procedure addTableHyperlinkColumnAfter (
+  p_ctxId      in ctxHandle
+, p_sheetId    in sheetHandle
+, p_tableId    in tableHandle
+, p_name       in varchar2
+, p_columnId   in pls_integer
+, p_location   in varchar2
+, p_linkName   in varchar2 default null
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
+`p_tableId`|Table handle.|Yes
+`p_name`|Column name.|Yes
+`p_columnId`|See [addTableColumnAfter](#addtablecolumnafter-procedure).|Yes
+`p_location`|See [addTableHyperlinkColumn](#addtablehyperlinkcolumn-procedure).|Yes
+`p_linkName`|See [addTableHyperlinkColumn](#addtablehyperlinkcolumn-procedure).|No
 
 ---
 ### setDateFormat procedure
@@ -2110,6 +2209,7 @@ The list of supported functions is available [here](./ExcelCommons/resources/exc
 * [Color spectrum demo](#color-spectrum-demo)
 * [Style showcase](#style-showcase)
 * [Formulas and Names](#formulas-and-names)
+* [Hyperlinks](#hyperlinks)
 
 #### Single query to sheet mapping, with header formatting
 [employees.sql](./test_cases/employees.sql) &#8594; [employees.xlsx](./samples/employees.xlsx)
@@ -2423,6 +2523,43 @@ end;
 /
 ```
 
+#### Hyperlinks
+[test-links.xlsx](./samples/test-links.xlsx)
+```
+declare
+  ctx     ExcelGen.ctxHandle := ExcelGen.createContext(ExcelGen.FILE_XLSX);
+  sheet1  ExcelGen.sheetHandle := ExcelGen.addSheet(ctx, 'sheet1');
+  table1  ExcelGen.tableHandle;
+begin
+  -- query-based table with excluded column "NAME"
+  table1 := ExcelGen.addTable(ctx, sheet1, q'{select level as id, 'TEST'||level as name from dual connect by level <= 100}', p_excludeCols => '"NAME"');
+  ExcelGen.setTableHeader(ctx, sheet1, table1);
+  
+  -- new hyperlink column "LINK" based on "NAME" and "VC1" column
+  ExcelGen.addTableHyperlinkColumnAfter(ctx, sheet1, table1, p_name => 'LINK', p_columnId => 2, p_location => 'scheme://test/${VC1}', p_linkName => '${NAME}');
+  ExcelGen.addTableColumn(ctx, sheet1, table1, 'VC1', 'RC1+1', ExcelFmla.REF_R1C1);
+  
+  -- intra-sheet link
+  ExcelGen.putHyperlinkCell(
+    p_ctxId          => ctx
+  , p_sheetId        => sheet1
+  , p_rowIdx         => 1
+  , p_colIdx         => 0
+  , p_location       => '#A1'
+  , p_linkName       => 'Back to top'
+  , p_anchorTableId  => table1
+  , p_anchorPosition => ExcelGen.BOTTOM_RIGHT
+  , p_style          => ExcelGen.makeCellStyleCss(ctx, 'background-color:yellow')
+  );
+  
+  ExcelGen.setTableProperties(ctx, sheet1, table1, 'TableStyleLight1');
+  
+  ExcelGen.createFile(ctx, 'TEST_DIR', 'test-links.xlsx');
+  
+  ExcelGen.closeContext(ctx);
+end;
+/
+```
 
 ## Copyright and license
 
