@@ -132,6 +132,7 @@ For simple requirements such as a single-table sheet, shortcut procedures and fu
   * [putDateCell](#putdatecell-procedure)
   * [putRichTextCell](#putrichtextcell-procedure)
   * [putFormulaCell](#putformulacell-procedure)
+  * [putHyperlinkCell](#puthyperlinkcell-procedure)
   * [mergeCells](#mergecells-procedure)
   * [makeCellRef](#makecellref-function)
 * Formulas and Names  
@@ -453,6 +454,30 @@ begin
   ... 
 end;
 ```
+
+---
+### putHyperlinkCell procedure
+Sets an hyperlink in a given cell.  
+See [putCell](#putcell-procedure) procedure for a description of common parameters.
+
+```sql
+procedure putHyperlinkCell (
+  p_ctxId           in ctxHandle
+, p_sheetId         in sheetHandle
+, p_rowIdx          in pls_integer
+, p_colIdx          in pls_integer
+, p_location        in varchar2
+, p_linkName        in varchar2 default null
+, p_style           in cellStyleHandle default null 
+, p_anchorTableId   in tableHandle default null
+, p_anchorPosition  in pls_integer default null
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_location`|Cf. [addTableHyperlinkColumn](#addtablehyperlinkcolumn-procedure).|Yes
+`p_linkName`|Cf. [addTableHyperlinkColumn](#addtablehyperlinkcolumn-procedure).|No
 
 ---
 ### addSheetFromQuery procedure and function
