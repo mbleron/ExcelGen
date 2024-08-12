@@ -2191,7 +2191,7 @@ Formulas must be entered in English locale, specifically:
 
 ### Supported Excel functions  
 
-The list of supported functions is available [here](./ExcelCommons/resources/excel-functions.csv).
+The list of supported functions is available [here](https://github.com/mbleron/ExcelCommons/blob/main/resources/excel-functions.csv).
 
 
 ## Examples
