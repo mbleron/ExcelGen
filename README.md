@@ -135,6 +135,7 @@ For simple requirements such as a single-table sheet, shortcut procedures and fu
   * [putHyperlinkCell](#puthyperlinkcell-procedure)
   * [mergeCells](#mergecells-procedure)
   * [makeCellRef](#makecellref-function)
+  * [makeCellRange](#makecellrange-function)
 * Formulas and Names  
   * [putDefinedName](#putdefinedname-procedure)
   * [putFormulaCell](#putformulacell-procedure)
@@ -142,6 +143,9 @@ For simple requirements such as a single-table sheet, shortcut procedures and fu
   * [addTableColumnBefore](#addtablecolumnbefore-procedure)
   * [addTableColumnAfter](#addtablecolumnafter-procedure)
   * [setCellReferenceStyle](#setcellreferencestyle-procedure)
+* Data validation
+  * [addDataValidationRule](#adddatavalidationrule-procedure)
+  * [setTableColumnValidationRule](#settablecolumnvalidationrule-procedure)
 * Style management
   * [setDateFormat](#setdateformat-procedure)  
   * [setTimestampFormat](#settimestampformat-procedure)  
@@ -478,6 +482,107 @@ Parameter|Description|Mandatory
 ---|---|---
 `p_location`|Cf. [addTableHyperlinkColumn](#addtablehyperlinkcolumn-procedure).|Yes
 `p_linkName`|Cf. [addTableHyperlinkColumn](#addtablehyperlinkcolumn-procedure).|No
+
+---
+### addDataValidationRule procedure
+
+Adds a data validation rule to a collection of ranges.
+
+```sql
+procedure addDataValidationRule (
+  p_ctxId             in ctxHandle
+, p_sheetId           in sheetHandle
+, p_type              in varchar2
+, p_cellRange         in ExcelTypes.ST_Sqref
+, p_value1            in varchar2
+, p_value2            in varchar2 default null
+, p_operator          in varchar2 default null
+, p_allowBlank        in boolean default true
+, p_showDropDown      in boolean default null
+, p_showErrorMessage  in boolean default null
+, p_errorMsg          in varchar2 default null
+, p_errorTitle        in varchar2 default null
+, p_errorStyle        in varchar2 default null
+, p_showInputMessage  in boolean default null
+, p_promptMsg         in varchar2 default null
+, p_promptTitle       in varchar2 default null
+, p_refStyle1         in pls_integer default null
+, p_refStyle2         in pls_integer default null
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
+`p_type`|Type of validation. <br/>One of `'whole'`, `'decimal'`, `'list'`, `'date'`, `'time'`, `'textLength'`, `'custom'`.|Yes
+`p_cellRange`|A sequence of ranges to which this validation rule applies, as an `ExcelTypes.ST_Sqref` collection. <br/>Each range represents a rectangular area or a single cell. Helper functions [makeCellRef](#makecellref-function) and [makeCellRange](#makecellrange-function) may be used to create a range expression out of individual row and column indices. <br/>Following Excel conventions, the top-left cell of the last range in the sequence will be used as a point of origin to resolve relative references occurring in this rule's formulas.|Yes
+`p_value1`|A formula string representing the first operand of the operator, or the Source/Formula for List/Custom types.|Yes
+`p_value2`|A formula string representing the second operand of the operator, when applicable.|No
+`p_operator`|Relational operator, when applicable. <br/>One of `'between'`, `'notBetween'`, `'equal'`, `'notEqual'`, `'greaterThan'`, `'greaterThanOrEqual'`, `'lessThan'`, `'lessThanOrEqual'`.|No
+`p_allowBlank`|"Ignore blank" flag.|No
+`p_showDropDown`|"In-cell dropdown" flag.|No
+`p_showErrorMessage`|"Show error alert" flag.|No
+`p_errorMsg`|Error message.|No
+`p_errorTitle`|Error title.|No
+`p_errorStyle`|Error alert style. <br/>One of `'stop'` (default), `'warning'`, `'information'`.|No
+`p_showInputMessage`|"Show input message" flag.|No
+`p_promptMsg`|Input message.|No
+`p_promptTitle`|Input title.|No
+`p_refStyle1`|Cell reference style of the first formula (`p_value1`). <br/>One of `ExcelFmla.REF_A1` (default) or `ExcelFmla.REF_R1C1`.|No
+`p_refStyle2`|Cell reference style of the second formula (`p_value2`).|No
+
+---
+### setTableColumnValidationRule procedure
+
+Adds a data validation rule to a given table column.
+
+```sql
+procedure setTableColumnValidationRule (
+  p_ctxId             in ctxHandle
+, p_sheetId           in sheetHandle
+, p_tableId           in tableHandle
+, p_columnId          in pls_integer
+, p_type              in varchar2
+, p_value1            in varchar2
+, p_value2            in varchar2 default null
+, p_operator          in varchar2 default null
+, p_allowBlank        in boolean default true
+, p_showDropDown      in boolean default null
+, p_showErrorMessage  in boolean default null
+, p_errorMsg          in varchar2 default null
+, p_errorTitle        in varchar2 default null
+, p_errorStyle        in varchar2 default null
+, p_showInputMessage  in boolean default null
+, p_promptMsg         in varchar2 default null
+, p_promptTitle       in varchar2 default null
+, p_refStyle1         in pls_integer default null
+, p_refStyle2         in pls_integer default null
+);
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
+`p_tableId`|Table handle.|Yes
+`p_columnId`|Column id (1-based index).|Yes
+`p_type`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|Yes
+`p_cellRange`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|Yes
+`p_value1`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|Yes
+`p_value2`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|No
+`p_operator`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|No
+`p_allowBlank`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|No
+`p_showDropDown`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|No
+`p_showErrorMessage`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|No
+`p_errorMsg`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|No
+`p_errorTitle`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|No
+`p_errorStyle`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|No
+`p_showInputMessage`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|No
+`p_promptMsg`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|No
+`p_promptTitle`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|No
+`p_refStyle1`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|No
+`p_refStyle2`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|No
 
 ---
 ### addSheetFromQuery procedure and function
@@ -1071,6 +1176,7 @@ Parameter|Description|Mandatory
 ### setDateFormat procedure
 This procedure sets the format applied to DATE values in the resulting spreadsheet file.  
 It is overloaded to operate either globally in the workbook or at a given sheet level, which takes precedence.  
+Current limitation: the format won't apply to date values resulting from formulas.  
 
 The format must follow MS Excel proprietary [syntax](https://support.office.com/en-us/article/format-a-date-the-way-you-want-8e10019e-d5d8-47a1-ba95-db95123d273e).  
 Default is `dd/mm/yyyy hh:mm:ss`.  
@@ -1099,6 +1205,7 @@ Parameter|Description|Mandatory
 ### setTimestampFormat procedure
 This procedure sets the format applied to TIMESTAMP values in the resulting spreadsheet file.  
 It is overloaded to operate either globally in the workbook or at a given sheet level, which takes precedence.  
+Current limitation: the format won't apply to timestamp values resulting from formulas.  
 
 Default is `dd/mm/yyyy hh:mm:ss.000`.  
 
@@ -1126,6 +1233,7 @@ Parameter|Description|Mandatory
 ### setNumFormat procedure
 This procedure sets the format applied to NUMBER values in the resulting spreadsheet file.  
 It is overloaded to operate either globally in the workbook or at a given sheet level, which takes precedence.  
+Current limitation: the format won't apply to numeric values resulting from formulas.  
 
 The format must follow MS Excel proprietary [syntax](https://support.microsoft.com/en-us/office/create-a-custom-number-format-78f2a361-936b-4c03-8772-09fab54be7f4).  
 Default is NULL, meaning the General cell format will apply.  
@@ -1374,6 +1482,28 @@ Parameter|Description|Mandatory
 ---|---|---
 `p_colIdx`|Column index.|Yes
 `p_rowIdx`|Row index.|Yes
+
+---
+### makeCellRange function
+This function creates a range string expression out of given column and row indices (1-based).  
+If last row and column indices are not specified, then a single cell reference is returned.
+
+```sql
+function makeCellRange (
+  p_startRowIdx  in pls_integer
+, p_startColIdx  in pls_integer
+, p_endRowIdx    in pls_integer default null
+, p_endColIdx    in pls_integer default null
+)
+return ExcelTypes.ST_Ref;
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_startRowIdx`|First row index.|Yes
+`p_startColIdx`|First column index.|Yes
+`p_endRowIdx`|Last row index.|Yes
+`p_endColIdx`|Last column index.|Yes
 
 ---
 ### setEncryption procedure

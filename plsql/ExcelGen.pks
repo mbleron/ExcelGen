@@ -59,6 +59,7 @@ create or replace package ExcelGen is
     Marc Bleron       2024-02-23     Added font strikethrough, text rotation, indent
     Marc Bleron       2024-05-10     Added sheet state, formula support
     Marc Bleron       2024-07-21     Added hyperlink, excluded columns, table naming
+    Marc Bleron       2024-08-14     Added makeCellRange, data validation
 ====================================================================================== */
 
   -- file types
@@ -200,6 +201,14 @@ create or replace package ExcelGen is
   , p_rowIdx  in pls_integer
   )
   return varchar2;
+
+  function makeCellRange (
+    p_startRowIdx  in pls_integer
+  , p_startColIdx  in pls_integer
+  , p_endRowIdx    in pls_integer default null
+  , p_endColIdx    in pls_integer default null
+  )
+  return ExcelTypes.ST_Ref;
 
   function colPxToCharWidth (p_px in pls_integer) return number;
   function rowPxToPt (p_px in pls_integer) return number;
@@ -495,6 +504,27 @@ create or replace package ExcelGen is
   , p_anchorPosition  in pls_integer default null
   );
 
+  procedure addDataValidationRule (
+    p_ctxId             in ctxHandle
+  , p_sheetId           in sheetHandle
+  , p_type              in varchar2
+  , p_cellRange         in ExcelTypes.ST_Sqref
+  , p_value1            in varchar2
+  , p_value2            in varchar2 default null
+  , p_operator          in varchar2 default null
+  , p_allowBlank        in boolean default true
+  , p_showDropDown      in boolean default null
+  , p_showErrorMessage  in boolean default null
+  , p_errorMsg          in varchar2 default null
+  , p_errorTitle        in varchar2 default null
+  , p_errorStyle        in varchar2 default null
+  , p_showInputMessage  in boolean default null
+  , p_promptMsg         in varchar2 default null
+  , p_promptTitle       in varchar2 default null
+  , p_refStyle1         in pls_integer default null
+  , p_refStyle2         in pls_integer default null
+  );
+
   procedure setBindVariable (
     p_ctxId      in ctxHandle
   , p_sheetId    in sheetHandle
@@ -651,6 +681,28 @@ create or replace package ExcelGen is
   , p_format    in varchar2
   );
 
+  procedure setTableColumnValidationRule (
+    p_ctxId             in ctxHandle
+  , p_sheetId           in sheetHandle
+  , p_tableId           in tableHandle
+  , p_columnId          in pls_integer
+  , p_type              in varchar2
+  , p_value1            in varchar2
+  , p_value2            in varchar2 default null
+  , p_operator          in varchar2 default null
+  , p_allowBlank        in boolean default true
+  , p_showDropDown      in boolean default null
+  , p_showErrorMessage  in boolean default null
+  , p_errorMsg          in varchar2 default null
+  , p_errorTitle        in varchar2 default null
+  , p_errorStyle        in varchar2 default null
+  , p_showInputMessage  in boolean default null
+  , p_promptMsg         in varchar2 default null
+  , p_promptTitle       in varchar2 default null
+  , p_refStyle1         in pls_integer default null
+  , p_refStyle2         in pls_integer default null
+  );
+
   procedure setTableRowProperties (
     p_ctxId    in ctxHandle
   , p_sheetId  in sheetHandle
@@ -758,15 +810,6 @@ create or replace package ExcelGen is
   , p_sheetId  in sheetHandle
   , p_style    in cellStyleHandle
   );
-
-  /*
-  procedure setColumnHlink (
-    p_ctxId     in ctxHandle
-  , p_sheetId   in sheetHandle
-  , p_columnId  in pls_integer
-  , p_target    in varchar2 default null
-  );
-  */
 
 $if NOT $$no_crypto OR $$no_crypto IS NULL $then
   procedure setEncryption (
