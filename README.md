@@ -3,7 +3,7 @@
 <p align="center"><img src="./resources/banner.png"/></p>
 
 ExcelGen is a PL/SQL utility to create Excel files (.xlsx, .xlsb) out of SQL data sources (query strings or cursors), with automatic pagination over multiple sheets.  
-It supports encryption, cell merging, various formatting options through a built-in API or CSS, table layout, formulas and defined names.
+It supports encryption, cell merging, various formatting options through a built-in API or CSS, table layout, formulas and defined names, and data validation.  
 
 ## Content
 * [What's New in...](#whats-new-in)  
@@ -2365,6 +2365,7 @@ The list of supported functions is available [here](https://github.com/mbleron/E
 * [Style showcase](#style-showcase)
 * [Formulas and Names](#formulas-and-names)
 * [Hyperlinks](#hyperlinks)
+* [Data validation](#data-validation)
 
 #### Single query to sheet mapping, with header formatting
 [employees.sql](./test_cases/employees.sql) &#8594; [employees.xlsx](./samples/employees.xlsx)
@@ -2715,6 +2716,10 @@ begin
 end;
 /
 ```
+
+#### Data validation
+Creates a workbook with various data validation rules.  
+[data-validation.sql](./test_cases/data-validation.sql) &#8594; [test-dataval.xlsx](./samples/test-dataval.xlsx)
 
 ## Copyright and license
 

@@ -1,5 +1,11 @@
 # Change Log
 
+## [4.2] - 2024-09-03
+
+### Added
+
+* Data validation (#58)
+
 ## [4.1] - 2024-08-12
 
 ### Added
