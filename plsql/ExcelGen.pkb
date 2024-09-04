@@ -59,9 +59,10 @@ create or replace package body ExcelGen is
     Marc Bleron       2024-02-23     Added font strikethrough, text rotation, indent
     Marc Bleron       2024-05-10     Added sheet state, formula support
     Marc Bleron       2024-07-21     Added hyperlink, excluded columns, table naming
+    Marc Bleron       2024-08-14     Added makeCellRange, data validation
 ====================================================================================== */
 
-  VERSION_NUMBER     constant varchar2(16) := '4.1.0';
+  VERSION_NUMBER     constant varchar2(16) := '4.2.0';
 
   -- OPC part MIME types
   MT_STYLES          constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml';
@@ -376,6 +377,7 @@ create or replace package body ExcelGen is
     name        varchar2(1024)
   , xfId        pls_integer
   , headerXfId  pls_integer
+  , dvRule      ExcelTypes.CT_DataValidation
   );
   
   type table_column_map_t is table of table_column_t index by pls_integer;
@@ -486,7 +488,8 @@ create or replace package body ExcelGen is
   , floatingCells        floatingCellList_t
   , cellRanges           cellRangeList_t
   , sharedFmlaSeq        pls_integer
-  , sharedFmlaMap        sharedFmlaMap_t 
+  , sharedFmlaMap        sharedFmlaMap_t
+  , dvRules              ExcelTypes.CT_DataValidations
   );
   
   type sheet_definition_map_t is table of sheet_definition_t index by pls_integer;
@@ -886,8 +889,19 @@ create or replace package body ExcelGen is
   is
     cellRef  cell_ref_t;
   begin
+    if colRef is null and rowRef is not null then
+      error('column reference argument cannot be null');
+    elsif colRef is not null and rowRef is null then
+      error('row reference argument cannot be null');
+    end if;
     cellRef.c := colRef;
     cellRef.cn := base26decode(cellRef.c);
+    if cellRef.cn not between 1 and MAX_COLUMN_NUMBER then
+      error(RANGE_INVALID_COL, cellRef.c);
+    end if;
+    if rowRef not between 1 and MAX_ROW_NUMBER then
+      error(RANGE_INVALID_ROW, rowRef);
+    end if;
     cellRef.r := rowRef;
     cellRef.value := cellRef.c || to_char(cellRef.r);
     return cellRef;
@@ -926,7 +940,7 @@ create or replace package body ExcelGen is
     return newCellRef;
   end;
   
-  function makeRange (
+  function makeRangeImpl (
     startCol  in varchar2
   , startRow  in pls_integer
   , endCol    in varchar2
@@ -937,23 +951,43 @@ create or replace package body ExcelGen is
     range  range_t;
   begin
     range.start_ref := makeCellRef(startCol, startRow);
+    if range.start_ref.value is null then
+      error(RANGE_EMPTY_REF);
+    end if;
     range.end_ref := makeCellRef(endCol, endRow);
     range.expr := range.start_ref.value || case when range.end_ref.value is not null then ':'||range.end_ref.value end;
     return range;
   end;
   
-  function makeRange (
+  function makeRangeImpl (
     cellSpan  in cellSpan_t 
   )
   return range_t
   is
   begin
-    return makeRange( 
+    return makeRangeImpl( 
              base26encode(cellSpan.anchorRef.colOffset)
            , cellSpan.anchorRef.rowOffset
            , base26encode(cellSpan.anchorRef.colOffset + cellSpan.colSpan - 1)
            , cellSpan.anchorRef.rowOffset + cellSpan.rowSpan - 1
            );
+  end;
+  
+  function makeCellRange (
+    p_startRowIdx  in pls_integer
+  , p_startColIdx  in pls_integer
+  , p_endRowIdx    in pls_integer default null
+  , p_endColIdx    in pls_integer default null
+  )
+  return ExcelTypes.ST_Ref
+  is
+  begin
+    return makeRangeImpl(
+             startCol  => base26encode(p_startColIdx)
+           , startRow  => p_startRowIdx
+           , endCol    => base26encode(p_endColIdx)
+           , endRow    => p_endRowIdx
+           ).expr;
   end;
   
   function parseRangeExpr (
@@ -2557,7 +2591,7 @@ create or replace package body ExcelGen is
     end if;
     -- if the table is declared over an empty dataset, extends its range by one row down to make it legal in Excel
     if isEmpty then
-      tab.ref := makeRange(tableRange.start_ref.c, tableRange.start_ref.r, tableRange.end_ref.c, tableRange.end_ref.r + 1);
+      tab.ref := makeRangeImpl(tableRange.start_ref.c, tableRange.start_ref.r, tableRange.end_ref.c, tableRange.end_ref.r + 1);
     else
       tab.ref := tableRange;
     end if;
@@ -3229,6 +3263,196 @@ create or replace package body ExcelGen is
     currentCtx.nameMap(nameKey) := definedName;
   
   end;
+
+  procedure setDVRuleSqref (
+    dvRule     in out nocopy ExcelTypes.CT_DataValidation
+  , cellRange  in ExcelTypes.ST_Sqref
+  )
+  is
+    dvRange   ExcelTypes.cellRange_t;
+    tmpRange  range_t;
+    
+    boundingAreaFirstRw   pls_integer;
+    boundingAreaFirstCol  pls_integer;
+  begin
+    
+    if cellRange is not null and cellRange.count != 0 then
+      
+      dvRule.sqref := ExcelTypes.cellRangeList_t();
+      for i in 1 .. cellRange.count loop
+        dvRange.value := cellRange(i);
+        tmpRange := parseRangeExpr(dvRange.value);
+        dvRange.rwFirst := tmpRange.start_ref.r;
+        dvRange.rwLast := nvl(tmpRange.end_ref.r, tmpRange.start_ref.r);
+        dvRange.colFirst := tmpRange.start_ref.cn;
+        dvRange.colLast := nvl(tmpRange.end_ref.cn, tmpRange.start_ref.cn);
+        dvRule.sqref.extend;
+        dvRule.sqref(dvRule.sqref.last) := dvRange;
+        
+        if i = 1 then
+          boundingAreaFirstRw := dvRange.rwFirst;
+          boundingAreaFirstCol := dvRange.colFirst;
+        else
+          boundingAreaFirstRw := least(boundingAreaFirstRw, dvRange.rwFirst);
+          boundingAreaFirstCol := least(boundingAreaFirstCol, dvRange.colFirst);
+        end if;
+        
+      end loop;
+      
+      -- active cell reference, used as a point of origin to resolve relative references occurring in fmla1 and fmla2
+      -- by Excel convention, it is the top-left cell of the last range in the sequence
+      dvRule.activeCellRef := tmpRange.start_ref.value;
+      
+      -- top-left cell reference of the rectangular bounding area of all ranges in the sequence
+      -- in the XLSX format, this is used as new point of origin to resolve relative references, which are also translated accordingly
+      -- in the XLSB format, this is not used, an offset is stored instead
+      dvRule.internalCellRef := makeCellRef(boundingAreaFirstCol, boundingAreaFirstRw);
+      
+    end if;
+    
+  end;
+  
+  function makeDVRule (
+    p_type              in varchar2
+  , p_cellRange         in ExcelTypes.ST_Sqref
+  , p_value1            in varchar2
+  , p_value2            in varchar2 default null
+  , p_operator          in varchar2 default null
+  , p_allowBlank        in boolean default true
+  , p_showDropDown      in boolean default null
+  , p_showErrorMessage  in boolean default null
+  , p_errorMsg          in varchar2 default null
+  , p_errorTitle        in varchar2 default null
+  , p_errorStyle        in varchar2 default null
+  , p_showInputMessage  in boolean default null
+  , p_promptMsg         in varchar2 default null
+  , p_promptTitle       in varchar2 default null
+  , p_refStyle1         in pls_integer default null
+  , p_refStyle2         in pls_integer default null    
+  )
+  return ExcelTypes.CT_DataValidation
+  is
+    dvRule  ExcelTypes.CT_DataValidation;
+  begin
+    
+    if not ExcelTypes.isValidDataValidationType(p_type) then
+      error('Invalid data validation type: %s', p_type);
+    end if;
+    dvRule.type := p_type;
+    
+    setDVRuleSqref(dvRule, p_cellRange);
+    
+    if dvRule.type not in ('list','custom') then
+      if not ExcelTypes.isValidDataValidationOperator(p_operator) then
+        error('Invalid data validation operator: %s', p_operator);
+      end if;
+      dvRule.operator := p_operator;
+    else
+      dvRule.operator := 'between'; -- default value, useful for XLSB format
+    end if;
+    
+    if p_value1 is null then
+      error('Missing value (%s) in data validation rule', 
+        case 
+        when dvRule.type in ('whole','decimal','textLength') then
+          case 
+          when dvRule.operator in ('between','notBetween','greaterThan','greaterThanOrEqual') then 'Minimum'
+          when dvRule.operator in ('lessThan', 'lessThanOrEqual') then 'Maximum'
+          else case when dvRule.type = 'textLength' then 'Length' else 'Value' end
+          end
+        when dvRule.type in ('date','time') then
+          case 
+          when dvRule.operator in ('between','notBetween','greaterThan','greaterThanOrEqual') then 'Start '||dvRule.type
+          when dvRule.operator in ('lessThan', 'lessThanOrEqual') then 'End '||dvRule.type
+          else initcap(dvRule.type)
+          end
+        when dvRule.type = 'list' then 'Source'
+        else 'Formula'
+        end
+      );
+    end if;
+    
+    dvRule.fmla1 := p_value1;
+    
+    if dvRule.operator in ('between','notBetween') and dvRule.type not in ('list','custom') then
+      if p_value2 is null then
+        error('Missing value (%s) in data validation rule',
+          case 
+          when dvRule.type in ('whole','decimal','textLength') then 'Maximum'
+          else 'End '||dvRule.type
+          end
+        );
+      end if;
+      dvRule.fmla2 := p_value2;
+    end if;
+    
+    dvRule.allowBlank := nvl(p_allowBlank, true);
+    dvRule.showDropDown := nvl(p_showDropDown, true);
+    
+    dvRule.showErrorMessage := nvl(p_showErrorMessage, true);
+    dvRule.errorStyle := nvl(p_errorStyle, 'stop');
+    if p_errorMsg is not null or p_errorTitle is not null then   
+      dvRule.error := p_errorMsg;
+      dvRule.errorTitle := p_errorTitle;
+      if p_errorStyle is not null and not ExcelTypes.isValidDataValidationErrStyle(p_errorStyle) then
+          error('Invalid data validation error style: %s', p_errorStyle);
+      end if;
+    end if;
+
+    dvRule.showInputMessage := nvl(p_showInputMessage, true);
+    if p_promptMsg is not null or p_promptTitle is not null then
+      dvRule.prompt := p_promptMsg;
+      dvRule.promptTitle := p_promptTitle;
+    end if;
+    
+    dvRule.refStyle1 := p_refStyle1;
+    dvRule.refStyle2 := p_refStyle2;
+    
+    return dvRule;
+    
+  end;
+
+  procedure writeDataValidationRule (
+    stream  in out nocopy stream_t
+  , dvRule  in ExcelTypes.CT_DataValidation
+  )
+  is
+  begin
+    stream_write(stream, '<dataValidation type="'||dvRule.type||'"');
+    if dvRule.type not in ('list','custom') then
+      stream_write(stream, ' operator="'||dvRule.operator||'"');
+    end if;
+    stream_write(stream, ' allowBlank="'||case when dvRule.allowBlank then '1' else '0' end||'"');
+    if dvRule.type = 'list' then
+      -- contrary to what its name implies, the showDropDown flag must be 0 to display the dropdown box,
+      -- this behaviour is consistent with the XLSB implementation where the flag is named fSuppressCombo
+      stream_write(stream, ' showDropDown="'||case when dvRule.showDropDown then '0' else '1' end||'"');
+    end if;
+    stream_write(stream, ' showInputMessage="'||case when dvRule.showInputMessage then '1' else '0' end||'"');
+    stream_write(stream, ' prompt="'||dbms_xmlgen.convert(dvRule.prompt)||'"');
+    stream_write(stream, ' promptTitle="'||dbms_xmlgen.convert(dvRule.promptTitle)||'"');
+    stream_write(stream, ' showErrorMessage="'||case when dvRule.showErrorMessage then '1' else '0' end||'"');
+    stream_write(stream, ' error="'||dbms_xmlgen.convert(dvRule.error)||'"');
+    stream_write(stream, ' errorTitle="'||dbms_xmlgen.convert(dvRule.errorTitle)||'"');
+    stream_write(stream, ' errorStyle="'||dvRule.errorStyle||'"');
+    stream_write(stream, ' sqref="');
+    for i in 1 .. dvRule.sqref.count loop
+      if i > 1 then
+        stream_write(stream, ' ');
+      end if;
+      stream_write(stream, dvRule.sqref(i).value);
+    end loop;
+    stream_write(stream, '">');
+    stream_write(stream, '<formula1>');
+    stream_write(stream, dbms_xmlgen.convert(ExcelFmla.parse(dvRule.fmla1, ExcelFmla.FMLATYPE_DATAVAL, dvRule.activeCellRef, dvRule.refStyle1, dvRule.internalCellRef)));
+    stream_write(stream, '</formula1>');
+    if dvRule.fmla2 is not null then
+      stream_write(stream, '<formula2>');
+      stream_write(stream, dbms_xmlgen.convert(ExcelFmla.parse(dvRule.fmla2, ExcelFmla.FMLATYPE_DATAVAL, dvRule.activeCellRef, dvRule.refStyle2, dvRule.internalCellRef)));
+      stream_write(stream, '</formula2>');
+    end if;
+    stream_write(stream, '</dataValidation>');
+  end;
   
   procedure createWorksheetImpl (
     ctx  in out nocopy context_t
@@ -3481,7 +3705,7 @@ create or replace package body ExcelGen is
         sd.done := true;
       end if;
       
-      t.range := makeRange(t.sqlMetadata.columnList(t.sqlMetadata.visibleColumnSet.first).colRef
+      t.range := makeRangeImpl(t.sqlMetadata.columnList(t.sqlMetadata.visibleColumnSet.first).colRef
                          , t.anchorRef.rowOffset
                          , t.sqlMetadata.columnList(t.sqlMetadata.visibleColumnSet.last).colRef
                          , cell.r);
@@ -3492,6 +3716,27 @@ create or replace package body ExcelGen is
         sheet.tableParts.extend;
         sheet.tableParts(sheet.tableParts.last) := tableId;
       end if;
+      
+      -- column data validation
+      columnId := t.columnMap.first;
+      while columnId is not null loop
+        if t.columnMap(columnId).dvRule.type is not null then
+          setDVRuleSqref(
+            dvRule    => t.columnMap(columnId).dvRule 
+          , cellRange => ExcelTypes.ST_Sqref(
+                           makeRangeImpl(
+                             t.sqlMetadata.visibleColumnSet(columnId)
+                           , t.range.start_ref.r + case when t.header.show then 1 else 0 end
+                           , t.sqlMetadata.visibleColumnSet(columnId)
+                           , t.range.end_ref.r
+                           ).expr
+                         )
+          );
+          sd.dvRules.extend;
+          sd.dvRules(sd.dvRules.last) := t.columnMap(columnId).dvRule;
+        end if;
+        columnId := t.columnMap.next(columnId);
+      end loop;
       
       sd.tableList(tId) := t;
 
@@ -3604,10 +3849,9 @@ create or replace package body ExcelGen is
           );
           
           ExcelFmla.putName('_xlnm._FilterDatabase', sd.sheetName);
-        
-          --sheet.filterRange := t.range;
-          --ctx.workbook.hasDefinedNames := true;
+          
           stream_write(stream, '<autoFilter ref="'||getRangeExpr(t.range)||'"/>');
+          
         end if;
       end if;
       
@@ -3618,7 +3862,7 @@ create or replace package body ExcelGen is
           cellSpan := sd.mergedCells(i);
           setAnchorRowOffset(sd, cellSpan.anchorRef);
           setAnchorColOffset(sd, cellSpan.anchorRef);
-          stream_write(stream, '<mergeCell ref="'||makeRange(cellSpan).expr||'"/>');
+          stream_write(stream, '<mergeCell ref="'||makeRangeImpl(cellSpan).expr||'"/>');
         end loop;
         stream_write(stream, '</mergeCells>');
       end if;
@@ -3663,6 +3907,15 @@ create or replace package body ExcelGen is
       part.contentType := MT_WORKSHEET;
       part.rels := CT_Relationships();
       
+      -- data validations
+      if sd.dvRules.count != 0 then
+        stream_write(stream, '<dataValidations count="'||to_char(sd.dvRules.count)||'">');
+        for i in 1 .. sd.dvRules.count loop
+          writeDataValidationRule(stream, sd.dvRules(i));
+        end loop;
+        stream_write(stream, '</dataValidations>');
+      end if;
+      
       -- table parts
       if sheet.tableParts.count != 0 then
         stream_write(stream, '<tableParts count="'||to_char(sheet.tableParts.count)||'">');
@@ -3682,7 +3935,7 @@ create or replace package body ExcelGen is
         t := sd.tableList(sd.sharedFmlaMap(si).tableId);
         stream.content := replace(stream.content
                                 , '###'||to_char(si)||'###'
-                                , makeRange(t.sqlMetadata.visibleColumnSet(sd.sharedFmlaMap(si).columnId)
+                                , makeRangeImpl(t.sqlMetadata.visibleColumnSet(sd.sharedFmlaMap(si).columnId)
                                           , t.range.start_ref.r + case when t.header.show then 1 else 0 end
                                           , t.sqlMetadata.visibleColumnSet(sd.sharedFmlaMap(si).columnId)
                                           , t.range.end_ref.r).expr);
@@ -3948,7 +4201,7 @@ create or replace package body ExcelGen is
         sd.done := true;
       end if;
 
-      t.range := makeRange(t.sqlMetadata.columnList(t.sqlMetadata.visibleColumnSet.first).colRef
+      t.range := makeRangeImpl(t.sqlMetadata.columnList(t.sqlMetadata.visibleColumnSet.first).colRef
                          , t.anchorRef.rowOffset
                          , t.sqlMetadata.columnList(t.sqlMetadata.visibleColumnSet.last).colRef
                          , cell.r);
@@ -3959,6 +4212,27 @@ create or replace package body ExcelGen is
         sheet.tableParts.extend;
         sheet.tableParts(sheet.tableParts.last) := tableId;
       end if;
+
+      -- column data validation
+      columnId := t.columnMap.first;
+      while columnId is not null loop
+        if t.columnMap(columnId).dvRule.type is not null then
+          setDVRuleSqref(
+            dvRule    => t.columnMap(columnId).dvRule 
+          , cellRange => ExcelTypes.ST_Sqref(
+                           makeRangeImpl(
+                             t.sqlMetadata.visibleColumnSet(columnId)
+                           , t.range.start_ref.r + case when t.header.show then 1 else 0 end
+                           , t.sqlMetadata.visibleColumnSet(columnId)
+                           , t.range.end_ref.r
+                           ).expr
+                         )
+          );
+          sd.dvRules.extend;
+          sd.dvRules(sd.dvRules.last) := t.columnMap(columnId).dvRule;
+        end if;
+        columnId := t.columnMap.next(columnId);
+      end loop;
       
       sd.tableList(tId) := t;
       
@@ -4140,6 +4414,11 @@ create or replace package body ExcelGen is
       part.name := sheet.partName;
       part.contentType := MT_WORKSHEET_BIN;
       part.rels := CT_Relationships();
+      
+      -- data validations
+      if sd.dvRules.count != 0 then
+        xutl_xlsb.put_DVals(stream, sd.dvRules);
+      end if;
       
       -- table parts
       if sheet.tableParts.count != 0 then
@@ -4870,6 +5149,7 @@ create or replace package body ExcelGen is
     sd.floatingCells := floatingCellList_t();
     sd.cellRanges := cellRangeList_t();
     sd.sharedFmlaSeq := 0;
+    sd.dvRules := ExcelTypes.CT_DataValidations();
     
     ctx.sheetDefinitionMap(sd.sheetIndex) := sd;
     ctx.sheetIndexMap(upper(sd.sheetName)) := sd.sheetIndex;
@@ -5279,20 +5559,7 @@ create or replace package body ExcelGen is
   begin
     addTableHyperlinkColImpl(p_ctxId, p_sheetId, p_tableId, p_name, p_location, p_linkName, p_columnId, true);
   end;
-  /*
-  procedure setTableColumnHyperlink (
-    p_ctxId      in ctxHandle
-  , p_sheetId    in sheetHandle
-  , p_tableId    in tableHandle
-  , p_columnId   in pls_integer
-  , p_location   in varchar2 default null
-  , p_linkName   in varchar2 default null
-  )
-  is
-  begin
-    null;
-  end;
-  */
+
   procedure putDefinedName (
     p_ctxId     in ctxHandle
   , p_name      in varchar2
@@ -5305,6 +5572,61 @@ create or replace package body ExcelGen is
   is
   begin
     putNameImpl(p_ctxId, p_name, p_value, p_scope, p_cellRef, p_comment, refStyle => p_refStyle);
+  end;
+
+  procedure addDataValidationRule (
+    p_ctxId             in ctxHandle
+  , p_sheetId           in sheetHandle
+  , p_type              in varchar2
+  , p_cellRange         in ExcelTypes.ST_Sqref
+  , p_value1            in varchar2
+  , p_value2            in varchar2 default null
+  , p_operator          in varchar2 default null
+  , p_allowBlank        in boolean default true
+  , p_showDropDown      in boolean default null
+  , p_showErrorMessage  in boolean default null
+  , p_errorMsg          in varchar2 default null
+  , p_errorTitle        in varchar2 default null
+  , p_errorStyle        in varchar2 default null
+  , p_showInputMessage  in boolean default null
+  , p_promptMsg         in varchar2 default null
+  , p_promptTitle       in varchar2 default null
+  , p_refStyle1         in pls_integer default null
+  , p_refStyle2         in pls_integer default null
+  )
+  is
+    dvRule     ExcelTypes.CT_DataValidation;
+    dvRuleIdx  pls_integer;
+  begin  
+  
+    dvRule := makeDVRule(
+                p_type
+              , p_cellRange
+              , p_value1
+              , p_value2
+              , p_operator
+              , p_allowBlank
+              , p_showDropDown
+              , p_showErrorMessage
+              , p_errorMsg
+              , p_errorTitle
+              , p_errorStyle
+              , p_showInputMessage
+              , p_promptMsg
+              , p_promptTitle
+              , p_refStyle1
+              , p_refStyle2
+              );
+    
+    if dvRule.sqref.count = 0 then
+      error('Missing cell reference in data validation rule');
+    else
+      loadContext(p_ctxId);
+      currentCtx.sheetDefinitionMap(p_sheetId).dvRules.extend;
+      dvRuleIdx := currentCtx.sheetDefinitionMap(p_sheetId).dvRules.last;
+      currentCtx.sheetDefinitionMap(p_sheetId).dvRules(dvRuleIdx) := dvRule;      
+    end if;
+    
   end;
 
   procedure putCellImpl (
@@ -5781,6 +6103,9 @@ create or replace package body ExcelGen is
   begin
     loadContext(p_ctxId);
     assertTableExists(p_sheetId, p_tableId);
+    if currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).columnMap.exists(p_columnId) then
+      tableColumn := currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).columnMap(p_columnId);
+    end if;
     tableColumn.name := p_columnName;
     tableColumn.xfId := p_style;
     tableColumn.headerXfId := p_headerStyle;
@@ -5805,6 +6130,54 @@ create or replace package body ExcelGen is
     end if;
     xfId := mergeCellFormat(currentCtx, xfId, p_format, force => true);    
     currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).columnMap(p_columnId).xfId := xfId;
+  end;
+
+  procedure setTableColumnValidationRule (
+    p_ctxId             in ctxHandle
+  , p_sheetId           in sheetHandle
+  , p_tableId           in tableHandle
+  , p_columnId          in pls_integer
+  , p_type              in varchar2
+  , p_value1            in varchar2
+  , p_value2            in varchar2 default null
+  , p_operator          in varchar2 default null
+  , p_allowBlank        in boolean default true
+  , p_showDropDown      in boolean default null
+  , p_showErrorMessage  in boolean default null
+  , p_errorMsg          in varchar2 default null
+  , p_errorTitle        in varchar2 default null
+  , p_errorStyle        in varchar2 default null
+  , p_showInputMessage  in boolean default null
+  , p_promptMsg         in varchar2 default null
+  , p_promptTitle       in varchar2 default null
+  , p_refStyle1         in pls_integer default null
+  , p_refStyle2         in pls_integer default null
+  )
+  is
+    dvRule  ExcelTypes.CT_DataValidation;
+  begin
+    dvRule := makeDVRule(
+                p_type
+              , null
+              , p_value1
+              , p_value2
+              , p_operator
+              , p_allowBlank
+              , p_showDropDown
+              , p_showErrorMessage
+              , p_errorMsg
+              , p_errorTitle
+              , p_errorStyle
+              , p_showInputMessage
+              , p_promptMsg
+              , p_promptTitle
+              , p_refStyle1
+              , p_refStyle2
+              );
+
+    loadContext(p_ctxId);
+    assertTableExists(p_sheetId, p_tableId);
+    currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).columnMap(p_columnId).dvRule := dvRule; 
   end;
 
   procedure setTableProperties (
@@ -6005,21 +6378,6 @@ create or replace package body ExcelGen is
     end if;
     xfId := mergeCellFormat(currentCtx, xfId, p_format, force => true);    
     setColumnProperties(p_ctxId, p_sheetId, p_columnId, xfId, p_header, p_width);
-  end;
-
-  procedure setColumnHlink (
-    p_ctxId     in ctxHandle
-  , p_sheetId   in sheetHandle
-  , p_columnId  in pls_integer
-  , p_target    in varchar2 default null
-  --, p_tooltip   in varchar2 default null
-  , p_tableId   in pls_integer default 1
-  )
-  is
-  begin
-    loadContext(p_ctxId);
-    currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).columnLinkMap(p_columnId) := p_target;
-    currentCtx.workbook.styles.hasHlink := true;
   end;
 
   procedure setBindVariableImpl (
