@@ -60,6 +60,7 @@ create or replace package ExcelGen is
     Marc Bleron       2024-05-10     Added sheet state, formula support
     Marc Bleron       2024-07-21     Added hyperlink, excluded columns, table naming
     Marc Bleron       2024-08-14     Added makeCellRange, data validation
+    Marc Bleron       2024-09-06     Conditional formatting
 ====================================================================================== */
 
   -- file types
@@ -96,6 +97,7 @@ create or replace package ExcelGen is
   subtype sheetHandle is pls_integer;
   subtype cellStyleHandle is pls_integer;
   subtype tableHandle is pls_integer;
+  subtype cfmtStyleHandle is pls_integer;
   
   subtype uint8 is ExcelTypes.uint8;
 
@@ -136,12 +138,12 @@ create or replace package ExcelGen is
   function makeFont (
     p_name       in varchar2 default null
   , p_sz         in pls_integer default null
-  , p_b          in boolean default false
-  , p_i          in boolean default false
+  , p_b          in boolean default null
+  , p_i          in boolean default null
   , p_color      in varchar2 default null
   , p_u          in varchar2 default null
   , p_vertAlign  in varchar2 default null
-  , p_strike     in boolean default false
+  , p_strike     in boolean default null
   )
   return CT_Font;
 
@@ -195,6 +197,22 @@ create or replace package ExcelGen is
   , p_css    in varchar2
   )
   return cellStyleHandle;
+
+  function makeCondFmtStyle (
+    p_ctxId       in ctxHandle
+  , p_numFmtCode  in varchar2 default null
+  , p_font        in CT_Font default null
+  , p_fill        in CT_Fill default null
+  , p_border      in CT_Border default null
+  , p_alignment   in CT_CellAlignment default null
+  )
+  return cfmtStyleHandle;
+
+  function makeCondFmtStyleCss (
+    p_ctxId  in ctxHandle
+  , p_css    in varchar2
+  )
+  return cfmtStyleHandle;
 
   function makeCellRef (
     p_colIdx  in pls_integer
@@ -523,6 +541,24 @@ create or replace package ExcelGen is
   , p_promptTitle       in varchar2 default null
   , p_refStyle1         in pls_integer default null
   , p_refStyle2         in pls_integer default null
+  );
+
+  procedure addCondFormattingRule (
+    p_ctxId       in ctxHandle
+  , p_sheetId     in sheetHandle
+  , p_type        in pls_integer
+  , p_cellRange   in ExcelTypes.ST_Sqref
+  , p_style       in ExcelGen.cfmtStyleHandle default null
+  , p_operator    in pls_integer default null
+  , p_value1      in varchar2 default null
+  , p_value2      in varchar2 default null
+  , p_param       in pls_integer default null
+  , p_percent     in boolean default null
+  , p_cfvoList    in ExcelTypes.CT_CfvoList default null
+  , p_hideValue   in boolean default null
+  , p_iconSet     in pls_integer default null
+  , p_reverse     in boolean default null
+  , p_stopIfTrue  in boolean default null
   );
 
   procedure setBindVariable (

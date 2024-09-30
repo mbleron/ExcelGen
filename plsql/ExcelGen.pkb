@@ -60,9 +60,10 @@ create or replace package body ExcelGen is
     Marc Bleron       2024-05-10     Added sheet state, formula support
     Marc Bleron       2024-07-21     Added hyperlink, excluded columns, table naming
     Marc Bleron       2024-08-14     Added makeCellRange, data validation
+    Marc Bleron       2024-09-06     Conditional formatting
 ====================================================================================== */
 
-  VERSION_NUMBER     constant varchar2(16) := '4.2.0';
+  VERSION_NUMBER     constant varchar2(16) := '4.3.0';
 
   -- OPC part MIME types
   MT_STYLES          constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml';
@@ -260,6 +261,14 @@ create or replace package body ExcelGen is
   , content    varchar2(32767)
   );
   
+  type CT_Dxf is record (
+    style    ExcelTypes.CT_Style
+  , content  varchar2(32767)
+  );
+  
+  type CT_DxfMap is table of pls_integer index by varchar2(32767);
+  type CT_Dxfs is table of CT_Dxf index by pls_integer;
+  
   type CT_CellXfMap is table of pls_integer index by varchar2(32767);
   type CT_CellXfs is table of CT_Xf index by pls_integer;
   
@@ -272,7 +281,8 @@ create or replace package body ExcelGen is
   type CT_CellStyles is table of CT_CellStyle;
   
   type CT_Stylesheet is record (
-    numFmtMap       CT_NumFmtMap
+    numFmtIdSeq     pls_integer
+  , numFmtMap       CT_NumFmtMap
   , numFmts         CT_NumFmts
   , fontMap         CT_FontMap
   , fonts           CT_Fonts
@@ -285,6 +295,8 @@ create or replace package body ExcelGen is
   , cellXfMap       CT_CellXfMap
   , cellXfs         CT_CellXfs
   , cellStyles      CT_CellStyles
+  , dxfMap          CT_DxfMap
+  , dxfs            CT_Dxfs
   , hasHlink        boolean := false
   , hlinkXfId       pls_integer
   );
@@ -490,6 +502,7 @@ create or replace package body ExcelGen is
   , sharedFmlaSeq        pls_integer
   , sharedFmlaMap        sharedFmlaMap_t
   , dvRules              ExcelTypes.CT_DataValidations
+  , cfRules              ExcelTypes.CT_CfRules
   );
   
   type sheet_definition_map_t is table of sheet_definition_t index by pls_integer;
@@ -1173,6 +1186,12 @@ create or replace package body ExcelGen is
     return '#' || ExcelTypes.makeRgbColor(r,g,b,a);
   end;
 
+  function getNextNumFmtId return pls_integer is
+  begin
+    currentCtx.workbook.styles.numFmtIdSeq := nvl(currentCtx.workbook.styles.numFmtIdSeq, 163) + 1;
+    return currentCtx.workbook.styles.numFmtIdSeq;
+  end;
+  
   function putNumfmt (
     styles  in out nocopy CT_Stylesheet
   , fmt     in varchar2 
@@ -1184,7 +1203,8 @@ create or replace package body ExcelGen is
     if styles.numFmtMap.exists(fmt) then
       numFmtId := styles.numFmtMap(fmt);
     else
-      numFmtId := nvl(styles.numFmts.last, 163) + 1;
+      --numFmtId := nvl(styles.numFmts.last, 163) + 1;
+      numFmtId := getNextNumFmtId;
       styles.numFmts(numFmtId) := fmt;
       styles.numFmtMap(fmt) := numFmtId;
     end if;
@@ -1229,14 +1249,16 @@ create or replace package body ExcelGen is
   )
   return pls_integer
   is
-    borderId  pls_integer;
+    borderId  pls_integer := 0;
   begin
-    if styles.borderMap.exists(border.content) then
-      borderId := styles.borderMap(border.content);
-    else
-      borderId := nvl(styles.borders.last, -1) + 1;
-      styles.borders(borderId) := border;
-      styles.borderMap(border.content) := borderId;
+    if border.content is not null then
+      if styles.borderMap.exists(border.content) then
+        borderId := styles.borderMap(border.content);
+      else
+        borderId := nvl(styles.borders.last, -1) + 1;
+        styles.borders(borderId) := border;
+        styles.borderMap(border.content) := borderId;
+      end if;
     end if;
     return borderId;
   end;
@@ -1244,12 +1266,12 @@ create or replace package body ExcelGen is
   function makeFont (
     p_name       in varchar2 default null
   , p_sz         in pls_integer default null
-  , p_b          in boolean default false
-  , p_i          in boolean default false
+  , p_b          in boolean default null
+  , p_i          in boolean default null
   , p_color      in varchar2 default null
   , p_u          in varchar2 default null
   , p_vertAlign  in varchar2 default null
-  , p_strike     in boolean default false
+  , p_strike     in boolean default null
   )
   return CT_Font
   is
@@ -1263,14 +1285,16 @@ create or replace package body ExcelGen is
   )
   return pls_integer
   is
-    fontId  pls_integer;
+    fontId  pls_integer := 0;
   begin
-    if styles.fontMap.exists(font.content) then
-      fontId := styles.fontMap(font.content);
-    else
-      fontId := nvl(styles.fonts.last, -1) + 1;
-      styles.fonts(fontId) := font;
-      styles.fontMap(font.content) := fontId;
+    if font.content is not null then
+      if styles.fontMap.exists(font.content) then
+        fontId := styles.fontMap(font.content);
+      else
+        fontId := nvl(styles.fonts.last, -1) + 1;
+        styles.fonts(fontId) := font;
+        styles.fontMap(font.content) := fontId;
+      end if;
     end if;
     return fontId;
   end;
@@ -1540,6 +1564,93 @@ create or replace package body ExcelGen is
     loadContext(p_ctxId);
     xf := makeCellXf(currentCtx.workbook.styles, 0, style.numberFormat, style.font, style.fill, style.border, style.alignment);
     return putCellXf(currentCtx.workbook.styles, xf);
+  end;
+
+  function putDxf (
+    styles  in out nocopy CT_Stylesheet
+  , style   in ExcelTypes.CT_Style
+  )
+  return pls_integer
+  is
+    dxfId     pls_integer;
+    dxf       CT_Dxf;
+  begin
+    dxf.style := style;
+    
+    -- font
+    dxf.content := dxf.style.font.content;
+    
+    -- numFmt
+    if dxf.style.numberFormat is not null then
+      -- numFmtMap is shared between xf and dxf
+      if styles.numFmtMap.exists(dxf.style.numberFormat) then
+        dxf.style.numFmtId := styles.numFmtMap(dxf.style.numberFormat);
+      else 
+        dxf.style.numFmtId := getNextNumFmtId;
+        styles.numFmtMap(dxf.style.numberFormat) := dxf.style.numFmtId;
+      end if;
+      dxf.content := dxf.content || 
+                     '<numFmt numFmtId="'||to_char(dxf.style.numFmtId)||'" formatCode="'||dbms_xmlgen.convert(dxf.style.numberFormat)||'"/>' ;
+    end if;
+    
+    -- fill
+    -- ugly workaround: 
+    -- in a dxf context, background color for solid pattern is stored in the bgColor element, contrary to regular xf cell style which uses fgColor
+    if dxf.style.fill.fillType = ExcelTypes.FT_PATTERN and dxf.style.fill.patternFill.patternType = 'solid' then
+      dxf.style.fill.patternFill.bgColor := null;
+      ExcelTypes.swapPatternFillColors(dxf.style.fill);
+    end if;
+    dxf.content := dxf.content || dxf.style.fill.content;
+    
+    -- alignment
+    dxf.content := dxf.content || dxf.style.alignment.content;
+    
+    -- border
+    dxf.content := dxf.content || dxf.style.border.content;
+    
+    if styles.dxfMap.exists(dxf.content) then
+      dxfId := styles.dxfMap(dxf.content);
+    else
+      dxfId := nvl(styles.dxfs.last, -1) + 1;
+      styles.dxfMap(dxf.content) := dxfId;
+      styles.dxfs(dxfId) := dxf;
+    end if;
+    
+    return dxfId;
+  end;
+  
+  function makeCondFmtStyle (
+    p_ctxId       in ctxHandle
+  , p_numFmtCode  in varchar2 default null
+  , p_font        in CT_Font default null
+  , p_fill        in CT_Fill default null
+  , p_border      in CT_Border default null
+  , p_alignment   in CT_CellAlignment default null
+  )
+  return cfmtStyleHandle
+  is
+    style  ExcelTypes.CT_Style;
+  begin
+    loadContext(p_ctxId);
+    
+    style.numberFormat := p_numFmtCode;
+    style.font := p_font;
+    style.fill := p_fill;
+    style.border := p_border;
+    style.alignment := p_alignment;
+        
+    return putDxf(currentCtx.workbook.styles, style);
+  end;
+
+  function makeCondFmtStyleCss (
+    p_ctxId  in ctxHandle
+  , p_css    in varchar2
+  )
+  return cfmtStyleHandle
+  is
+  begin
+    loadContext(p_ctxId);
+    return putDxf(currentCtx.workbook.styles, ExcelTypes.getStyleFromCss(p_css));
   end;
 
   function mergeCellFormat (
@@ -1868,7 +1979,7 @@ create or replace package body ExcelGen is
     dummy := putFont(styles, makeFont(ExcelTypes.DEFAULT_FONT_FAMILY, ExcelTypes.DEFAULT_FONT_SIZE));
     dummy := putFill(styles, makePatternFill('none'));
     dummy := putFill(styles, makePatternFill('gray125'));
-    dummy := putBorder(styles, makeBorder());
+    dummy := putBorder(styles, makeBorder('none'));
     
     xfId := putCellStyleXf(styles, makeCellXf(styles, null)); -- master cell xf
     dummy := putCellXf(styles, makeCellXf(styles, xfId));
@@ -2765,7 +2876,15 @@ create or replace package body ExcelGen is
     end if;
     
     -- dxfs
-    stream_write(stream, '<dxfs count="0"/>');
+    if styles.dxfs.count != 0 then
+      stream_write(stream, '<dxfs count="'||to_char(styles.dxfs.count)||'">');
+      for i in styles.dxfs.first .. styles.dxfs.last loop
+        stream_write(stream, '<dxf>' || styles.dxfs(i).content || '</dxf>');
+      end loop;
+      stream_write(stream, '</dxfs>');      
+    else
+      stream_write(stream, '<dxfs count="0"/>');
+    end if;
     
     stream_write(stream, '</styleSheet>');
     stream_flush(stream);
@@ -2865,7 +2984,10 @@ create or replace package body ExcelGen is
     xutl_xlsb.put_simple_record(stream, 620);  -- BrtEndStyles    
     
     -- dxfs
-    xutl_xlsb.put_simple_record(stream, 505, int2raw(0));  -- BrtBeginDXFs
+    xutl_xlsb.put_simple_record(stream, 505, int2raw(styles.dxfs.count));  -- BrtBeginDXFs
+    for i in styles.dxfs.first .. styles.dxfs.last loop
+      xutl_xlsb.put_DXF(stream, styles.dxfs(i).style);
+    end loop;    
     xutl_xlsb.put_simple_record(stream, 506);  -- BrtEndDXFs 
     
     -- tableStyles?
@@ -3264,9 +3386,9 @@ create or replace package body ExcelGen is
   
   end;
 
-  procedure setDVRuleSqref (
-    dvRule     in out nocopy ExcelTypes.CT_DataValidation
-  , cellRange  in ExcelTypes.ST_Sqref
+  procedure setSqref (
+    sqref     in out nocopy ExcelTypes.cellRangeSeq_t
+  , cellRange in ExcelTypes.ST_Sqref
   )
   is
     dvRange   ExcelTypes.cellRange_t;
@@ -3278,7 +3400,7 @@ create or replace package body ExcelGen is
     
     if cellRange is not null and cellRange.count != 0 then
       
-      dvRule.sqref := ExcelTypes.cellRangeList_t();
+      sqref.ranges := ExcelTypes.cellRangeList_t();
       for i in 1 .. cellRange.count loop
         dvRange.value := cellRange(i);
         tmpRange := parseRangeExpr(dvRange.value);
@@ -3286,8 +3408,8 @@ create or replace package body ExcelGen is
         dvRange.rwLast := nvl(tmpRange.end_ref.r, tmpRange.start_ref.r);
         dvRange.colFirst := tmpRange.start_ref.cn;
         dvRange.colLast := nvl(tmpRange.end_ref.cn, tmpRange.start_ref.cn);
-        dvRule.sqref.extend;
-        dvRule.sqref(dvRule.sqref.last) := dvRange;
+        sqref.ranges.extend;
+        sqref.ranges(sqref.ranges.last) := dvRange;
         
         if i = 1 then
           boundingAreaFirstRw := dvRange.rwFirst;
@@ -3299,14 +3421,16 @@ create or replace package body ExcelGen is
         
       end loop;
       
+      -- Data Validation context:
       -- active cell reference, used as a point of origin to resolve relative references occurring in fmla1 and fmla2
       -- by Excel convention, it is the top-left cell of the last range in the sequence
-      dvRule.activeCellRef := tmpRange.start_ref.value;
+      sqref.lastRangeCellRef := tmpRange.start_ref.value;
       
+      -- Data Validation context:
       -- top-left cell reference of the rectangular bounding area of all ranges in the sequence
       -- in the XLSX format, this is used as new point of origin to resolve relative references, which are also translated accordingly
       -- in the XLSB format, this is not used, an offset is stored instead
-      dvRule.internalCellRef := makeCellRef(boundingAreaFirstCol, boundingAreaFirstRw);
+      sqref.boundingAreaFirstCellRef := makeCellRef(boundingAreaFirstCol, boundingAreaFirstRw);
       
     end if;
     
@@ -3340,7 +3464,7 @@ create or replace package body ExcelGen is
     end if;
     dvRule.type := p_type;
     
-    setDVRuleSqref(dvRule, p_cellRange);
+    setSqref(dvRule.sqref, p_cellRange);
     
     if dvRule.type not in ('list','custom') then
       if not ExcelTypes.isValidDataValidationOperator(p_operator) then
@@ -3436,22 +3560,171 @@ create or replace package body ExcelGen is
     stream_write(stream, ' errorTitle="'||dbms_xmlgen.convert(dvRule.errorTitle)||'"');
     stream_write(stream, ' errorStyle="'||dvRule.errorStyle||'"');
     stream_write(stream, ' sqref="');
-    for i in 1 .. dvRule.sqref.count loop
+    for i in 1 .. dvRule.sqref.ranges.count loop
       if i > 1 then
         stream_write(stream, ' ');
       end if;
-      stream_write(stream, dvRule.sqref(i).value);
+      stream_write(stream, dvRule.sqref.ranges(i).value);
     end loop;
     stream_write(stream, '">');
     stream_write(stream, '<formula1>');
-    stream_write(stream, dbms_xmlgen.convert(ExcelFmla.parse(dvRule.fmla1, ExcelFmla.FMLATYPE_DATAVAL, dvRule.activeCellRef, dvRule.refStyle1, dvRule.internalCellRef)));
+    stream_write(stream, dbms_xmlgen.convert(ExcelFmla.parse(dvRule.fmla1, ExcelFmla.FMLATYPE_DATAVAL, dvRule.sqref.lastRangeCellRef, dvRule.refStyle1, dvRule.sqref.boundingAreaFirstCellRef)));
     stream_write(stream, '</formula1>');
     if dvRule.fmla2 is not null then
       stream_write(stream, '<formula2>');
-      stream_write(stream, dbms_xmlgen.convert(ExcelFmla.parse(dvRule.fmla2, ExcelFmla.FMLATYPE_DATAVAL, dvRule.activeCellRef, dvRule.refStyle2, dvRule.internalCellRef)));
+      stream_write(stream, dbms_xmlgen.convert(ExcelFmla.parse(dvRule.fmla2, ExcelFmla.FMLATYPE_DATAVAL, dvRule.sqref.lastRangeCellRef, dvRule.refStyle2, dvRule.sqref.boundingAreaFirstCellRef)));
       stream_write(stream, '</formula2>');
     end if;
     stream_write(stream, '</dataValidation>');
+  end;
+
+  procedure writeCondFmtRule (
+    stream  in out nocopy stream_t
+  , rule    in ExcelTypes.CT_CfRule
+  , pos     in pls_integer
+  )
+  is
+  begin
+    stream_write(stream, '<conditionalFormatting sqref="');
+    for i in 1 .. rule.sqref.ranges.count loop
+      if i > 1 then
+        stream_write(stream, ' ');
+      end if;
+      stream_write(stream, rule.sqref.ranges(i).value);
+    end loop;
+    stream_write(stream, '">');
+    
+    stream_write(stream, '<cfRule');
+    
+    -- BEGIN Attributes
+    stream_write(stream, ' type="'||ExcelTypes.getCondFmtRuleType(rule.type, rule.template)||'"');
+    stream_write(stream, ' priority="'||to_char(pos)||'"');
+    
+    if rule.dxfId is not null then
+      stream_write(stream, ' dxfId="'||to_char(rule.dxfId)||'"');
+    end if;
+    
+    if rule.template in (ExcelTypes.CF_TEMP_EXPR, ExcelTypes.CF_TEMP_CONTAINSTEXT) then
+      stream_write(stream, ' operator="'||ExcelTypes.getCondFmtOperator(rule.template, rule.param)||'"');
+    end if;
+    
+    if rule.template = ExcelTypes.CF_TEMP_CONTAINSTEXT then
+      stream_write(stream, ' text="'||dbms_xmlgen.convert(rule.strParam)||'"');
+    end if;
+    
+    if rule.type = ExcelTypes.CF_TYPE_EXPRIS 
+       and rule.template between ExcelTypes.CF_TEMP_TIMEPERIODTODAY and ExcelTypes.CF_TEMP_TIMEPERIODTHISMONTH
+    then
+      stream_write(stream, ' timePeriod="'||ExcelTypes.getCondFmtTimePeriod(rule.param)||'"');
+    end if;
+    
+    if rule.template = ExcelTypes.CF_TEMP_BELOWAVERAGE then
+      stream_write(stream, ' aboveAverage="0"');
+    end if;
+    
+    if rule.template in (ExcelTypes.CF_TEMP_EQUALBELOWAVERAGE, ExcelTypes.CF_TEMP_EQUALABOVEAVERAGE) then
+      stream_write(stream, ' equalAverage="1"');
+    end if;
+    
+    if rule.template in (ExcelTypes.CF_TEMP_BELOWAVERAGE, ExcelTypes.CF_TEMP_ABOVEAVERAGE) 
+       and rule.param != 0  
+    then
+      stream_write(stream, ' stdDev="'||to_char(rule.param)||'"');
+    end if;
+    
+    if rule.template = ExcelTypes.CF_TEMP_FILTER then
+      if rule.percent then
+        stream_write(stream, ' percent="1"');
+      end if;
+      if rule.bottom then
+        stream_write(stream, ' bottom="1"');
+      end if;
+      stream_write(stream, ' rank="'||to_char(rule.param)||'"');
+    end if;
+    
+    if rule.stopTrue then
+      stream_write(stream, ' stopIfTrue="1"');
+    end if;
+    -- END Attributes
+    
+    stream_write(stream, '>');
+    
+    -- BEGIN Children
+    if rule.template = ExcelTypes.CF_TEMP_EXPR then
+      stream_write(stream, '<formula>'||dbms_xmlgen.convert(ExcelFmla.parse(rule.fmla1, ExcelFmla.FMLATYPE_CELL, rule.sqref.boundingAreaFirstCellRef))||'</formula>');
+      if rule.param in (ExcelTypes.CF_OPER_BN, ExcelTypes.CF_OPER_NB) then
+        stream_write(stream, '<formula>'||dbms_xmlgen.convert(ExcelFmla.parse(rule.fmla2, ExcelFmla.FMLATYPE_CELL, rule.sqref.boundingAreaFirstCellRef))||'</formula>');
+      end if;
+    
+    elsif rule.template = ExcelTypes.CF_TEMP_FMLA 
+       or rule.template between ExcelTypes.CF_TEMP_CONTAINSTEXT and ExcelTypes.CF_TEMP_TIMEPERIODTHISMONTH
+    then
+      stream_write(stream, '<formula>'||dbms_xmlgen.convert(ExcelFmla.parse(rule.fmla1, ExcelFmla.FMLATYPE_CELL, rule.sqref.boundingAreaFirstCellRef))||'</formula>');
+      
+    elsif rule.template = ExcelTypes.CF_TEMP_GRADIENT then
+      stream_write(stream, '<colorScale>');
+      
+      -- cfvo
+      for i in 1 .. rule.cfvoList.count loop
+        stream_write(stream, '<cfvo type="'||ExcelTypes.getCondFmtVOType(rule.cfvoList(i).type)||'"');
+        if rule.cfvoList(i).type not in (ExcelTypes.CFVO_MIN, ExcelTypes.CFVO_MAX) then
+          stream_write(stream, ' val="'||dbms_xmlgen.convert(ExcelFmla.parse(rule.cfvoList(i).value, ExcelFmla.FMLATYPE_CELL, rule.sqref.boundingAreaFirstCellRef))||'"');
+        end if;
+        stream_write(stream, '/>');
+      end loop;
+      -- color
+      for i in 1 .. rule.cfvoList.count loop
+        stream_write(stream, '<color rgb="'||rule.cfvoList(i).color||'"/>');
+      end loop;
+      
+      stream_write(stream, '</colorScale>');
+    
+    elsif rule.template = ExcelTypes.CF_TEMP_DATABAR then
+      stream_write(stream, '<dataBar'||case when rule.hideValue then ' showValue="0"' end||'>');
+      
+      -- cfvo
+      for i in 1 .. 2 loop
+        stream_write(stream, '<cfvo type="'||ExcelTypes.getCondFmtVOType(rule.cfvoList(i).type)||'"');
+        if rule.cfvoList(i).type not in (ExcelTypes.CFVO_MIN, ExcelTypes.CFVO_MAX) then
+          stream_write(stream, ' val="'||dbms_xmlgen.convert(ExcelFmla.parse(rule.cfvoList(i).value, ExcelFmla.FMLATYPE_CELL, rule.sqref.boundingAreaFirstCellRef))||'"');
+        end if;
+        stream_write(stream, '/>');
+      end loop;
+      -- color
+      stream_write(stream, '<color rgb="'||rule.cfvoList(3).color||'"/>');
+      
+      stream_write(stream, '</dataBar>');
+      
+    elsif rule.template = ExcelTypes.CF_TEMP_MULTISTATE then
+      stream_write(stream, '<iconSet iconSet="'||ExcelTypes.getCondFmtIconSet(rule.iconSet)||'"');
+      if rule.hideValue then
+        stream_write(stream, ' showValue="0"');
+      end if;
+      if rule.reverse then
+        stream_write(stream, ' reverse="1"');
+      end if;
+      stream_write(stream, '>');
+      
+      -- cfvo
+      stream_write(stream, '<cfvo type="percent" val="0"/>');
+      for i in 1 .. rule.cfvoList.count loop
+        stream_write(stream, '<cfvo type="'||ExcelTypes.getCondFmtVOType(rule.cfvoList(i).type)||'"');
+        if not nvl(rule.cfvoList(i).gte, true) then
+          stream_write(stream, ' gte="0"');
+        end if;
+        stream_write(stream, ' val="'||dbms_xmlgen.convert(ExcelFmla.parse(rule.cfvoList(i).value, ExcelFmla.FMLATYPE_CELL, rule.sqref.boundingAreaFirstCellRef))||'"');
+        stream_write(stream, '/>');
+      end loop;
+      
+      stream_write(stream, '</iconSet>');
+          
+    end if;
+    -- END Children
+    
+    stream_write(stream, '</cfRule>');
+    
+    stream_write(stream, '</conditionalFormatting>');
+    
   end;
   
   procedure createWorksheetImpl (
@@ -3721,8 +3994,8 @@ create or replace package body ExcelGen is
       columnId := t.columnMap.first;
       while columnId is not null loop
         if t.columnMap(columnId).dvRule.type is not null then
-          setDVRuleSqref(
-            dvRule    => t.columnMap(columnId).dvRule 
+          setSqref(
+            sqref     => t.columnMap(columnId).dvRule.sqref
           , cellRange => ExcelTypes.ST_Sqref(
                            makeRangeImpl(
                              t.sqlMetadata.visibleColumnSet(columnId)
@@ -3906,6 +4179,11 @@ create or replace package body ExcelGen is
       part.name := sheet.partName;
       part.contentType := MT_WORKSHEET;
       part.rels := CT_Relationships();
+      
+      -- conditional formatting
+      for i in 1 .. sd.cfRules.count loop
+        writeCondFmtRule(stream, sd.cfRules(i), i);
+      end loop;
       
       -- data validations
       if sd.dvRules.count != 0 then
@@ -4217,8 +4495,8 @@ create or replace package body ExcelGen is
       columnId := t.columnMap.first;
       while columnId is not null loop
         if t.columnMap(columnId).dvRule.type is not null then
-          setDVRuleSqref(
-            dvRule    => t.columnMap(columnId).dvRule 
+          setSqref(
+            sqref    => t.columnMap(columnId).dvRule.sqref
           , cellRange => ExcelTypes.ST_Sqref(
                            makeRangeImpl(
                              t.sqlMetadata.visibleColumnSet(columnId)
@@ -5150,6 +5428,7 @@ create or replace package body ExcelGen is
     sd.cellRanges := cellRangeList_t();
     sd.sharedFmlaSeq := 0;
     sd.dvRules := ExcelTypes.CT_DataValidations();
+    sd.cfRules := ExcelTypes.CT_CfRules();
     
     ctx.sheetDefinitionMap(sd.sheetIndex) := sd;
     ctx.sheetIndexMap(upper(sd.sheetName)) := sd.sheetIndex;
@@ -5618,7 +5897,7 @@ create or replace package body ExcelGen is
               , p_refStyle2
               );
     
-    if dvRule.sqref.count = 0 then
+    if dvRule.sqref.ranges.count = 0 then
       error('Missing cell reference in data validation rule');
     else
       loadContext(p_ctxId);
@@ -5627,6 +5906,329 @@ create or replace package body ExcelGen is
       currentCtx.sheetDefinitionMap(p_sheetId).dvRules(dvRuleIdx) := dvRule;      
     end if;
     
+  end;
+
+  procedure addCondFormattingRule (
+    p_ctxId       in ctxHandle
+  , p_sheetId     in sheetHandle
+  , p_type        in pls_integer
+  , p_cellRange   in ExcelTypes.ST_Sqref
+  , p_style       in ExcelGen.cfmtStyleHandle default null
+  , p_operator    in pls_integer default null
+  , p_value1      in varchar2 default null
+  , p_value2      in varchar2 default null
+  , p_param       in pls_integer default null
+  , p_percent     in boolean default null
+  , p_cfvoList    in ExcelTypes.CT_CfvoList default null
+  , p_hideValue   in boolean default null
+  , p_iconSet     in pls_integer default null
+  , p_reverse     in boolean default null
+  , p_stopIfTrue  in boolean default null
+  )
+  is
+    rule               ExcelTypes.CT_CfRule;
+    ruleIdx            pls_integer;
+    requiredCfvoCount  pls_integer;
+    
+    -- update cell ref placeholder with the top-left cell of the bounding area of all ranges this rule applies to.
+    procedure updateCellRefPlaceholder is
+    begin
+      rule.fmla1 := replace(rule.fmla1, '__A1__', rule.sqref.boundingAreaFirstCellRef);      
+    end;
+    
+  begin
+    
+    setSqref(rule.sqref, p_cellRange);
+    rule.dxfId := p_style;
+    rule.stopTrue := nvl(p_stopIfTrue, false);
+    
+    if not ExcelTypes.isValidCondFmtRuleType(p_type) then
+      error('Invalid conditional formatting rule type');
+    end if;
+
+    case p_type
+    when ExcelTypes.CF_TYPE_EXPR then
+    
+      rule.type := ExcelTypes.CF_TYPE_EXPRIS;
+      rule.template := ExcelTypes.CF_TEMP_FMLA;
+      rule.fmla1 := p_value1;
+    
+    when ExcelTypes.CF_TYPE_CELLIS then
+      
+      rule.type := ExcelTypes.CF_TYPE_CELLIS;
+      rule.template := ExcelTypes.CF_TEMP_EXPR;
+      
+      if not ExcelTypes.isValidCondFmtOperator(p_type, p_operator) then
+        error('Invalid relational operator for this conditional formatting rule type');
+      end if;
+      
+      rule.param := p_operator; -- CF_OPER_*
+      rule.fmla1 := p_value1;
+      if rule.param in (ExcelTypes.CF_OPER_BN, ExcelTypes.CF_OPER_NB) then
+        rule.fmla2 := p_value2;
+      end if;
+      
+    when ExcelTypes.CF_TYPE_TEXT then
+    
+      rule.type := ExcelTypes.CF_TYPE_EXPRIS;
+      rule.template := ExcelTypes.CF_TEMP_CONTAINSTEXT;
+
+      if not ExcelTypes.isValidCondFmtOperator(p_type, p_operator) then
+        error('Invalid text operator for this conditional formatting rule type');
+      end if;
+      
+      case p_operator
+      when ExcelTypes.CF_TEXTOPER_CONTAINS then
+        rule.fmla1 := 'NOT(ISERROR(SEARCH("__TEXT__",__A1__)))';
+        
+      when ExcelTypes.CF_TEXTOPER_NOTCONTAINS then
+        rule.fmla1 := 'ISERROR(SEARCH("__TEXT__",__A1__))';
+        
+      when ExcelTypes.CF_TEXTOPER_BEGINSWITH then
+        rule.fmla1 := 'LEFT(__A1__,LEN("__TEXT__"))="__TEXT__"';
+        
+      when ExcelTypes.CF_TEXTOPER_ENDSWITH then
+        rule.fmla1 := 'RIGHT(__A1__,LEN("__TEXT__"))="__TEXT__"';
+        
+      end case;
+      
+      updateCellRefPlaceholder;
+      rule.fmla1 := replace(rule.fmla1, '__TEXT__', replace(p_value1, '"', '""'));
+      
+      rule.param := p_operator;
+      rule.strParam := p_value1;
+      
+    when ExcelTypes.CF_TYPE_TIMEPERIOD then
+      
+      rule.type := ExcelTypes.CF_TYPE_EXPRIS;
+
+      if not ExcelTypes.isValidCondFmtOperator(p_type, p_operator) then
+        error('Invalid time period for this conditional formatting rule type');
+      end if;
+
+      case p_operator
+      when ExcelTypes.CF_TIMEPERIOD_TODAY then
+        rule.template := ExcelTypes.CF_TEMP_TIMEPERIODTODAY;
+        rule.fmla1 := 'FLOOR(__A1__,1)=TODAY()';
+        
+      when ExcelTypes.CF_TIMEPERIOD_YESTERDAY then 
+        rule.template := ExcelTypes.CF_TEMP_TIMEPERIODYESTERDAY;
+        rule.fmla1 := 'FLOOR(__A1__,1)=TODAY()-1';
+        
+      when ExcelTypes.CF_TIMEPERIOD_LAST7DAYS then 
+        rule.template := ExcelTypes.CF_TEMP_TIMEPERIODLAST7DAYS;
+        rule.fmla1 := 'AND(TODAY()-FLOOR(__A1__,1)<=6,FLOOR(__A1__,1)<=TODAY())';
+        
+      when ExcelTypes.CF_TIMEPERIOD_THISWEEK then 
+        rule.template := ExcelTypes.CF_TEMP_TIMEPERIODTHISWEEK;
+        rule.fmla1 := 'AND(TODAY()-ROUNDDOWN(__A1__,0)<=WEEKDAY(TODAY())-1,ROUNDDOWN(__A1__,0)-TODAY()<=7-WEEKDAY(TODAY()))';
+        
+      when ExcelTypes.CF_TIMEPERIOD_LASTWEEK then 
+        rule.template := ExcelTypes.CF_TEMP_TIMEPERIODLASTWEEK;
+        rule.fmla1 := 'AND(TODAY()-ROUNDDOWN(__A1__,0)>=(WEEKDAY(TODAY())),TODAY()-ROUNDDOWN(__A1__,0)<(WEEKDAY(TODAY())+7))';
+        
+      when ExcelTypes.CF_TIMEPERIOD_LASTMONTH then 
+        rule.template := ExcelTypes.CF_TEMP_TIMEPERIODLASTMONTH;
+        rule.fmla1 := 'AND(MONTH(__A1__)=MONTH(EDATE(TODAY(),0-1)),YEAR(__A1__)=YEAR(EDATE(TODAY(),0-1)))';
+        
+      when ExcelTypes.CF_TIMEPERIOD_TOMORROW then 
+        rule.template := ExcelTypes.CF_TEMP_TIMEPERIODTOMORROW;
+        rule.fmla1 := 'FLOOR(__A1__,1)=TODAY()+1';
+        
+      when ExcelTypes.CF_TIMEPERIOD_NEXTWEEK then 
+        rule.template := ExcelTypes.CF_TEMP_TIMEPERIODNEXTWEEK;
+        rule.fmla1 := 'AND(ROUNDDOWN(__A1__,0)-TODAY()>(7-WEEKDAY(TODAY())),ROUNDDOWN(__A1__,0)-TODAY()<(15-WEEKDAY(TODAY())))';
+        
+      when ExcelTypes.CF_TIMEPERIOD_NEXTMONTH then 
+        rule.template := ExcelTypes.CF_TEMP_TIMEPERIODNEXTMONTH;
+        rule.fmla1 := 'AND(MONTH(__A1__)=MONTH(EDATE(TODAY(),0+1)),YEAR(__A1__)=YEAR(EDATE(TODAY(),0+1)))';
+        
+      when ExcelTypes.CF_TIMEPERIOD_THISMONTH then 
+        rule.template := ExcelTypes.CF_TEMP_TIMEPERIODTHISMONTH;
+        rule.fmla1 := 'AND(MONTH(__A1__)=MONTH(TODAY()),YEAR(__A1__)=YEAR(TODAY()))';
+        
+      end case;
+      
+      updateCellRefPlaceholder;
+      rule.param := p_operator;
+    
+    when ExcelTypes.CF_TYPE_BLANKS then
+      
+      rule.type := ExcelTypes.CF_TYPE_EXPRIS;
+      rule.template := ExcelTypes.CF_TEMP_CONTAINSBLANKS;
+      rule.fmla1 := 'LEN(TRIM(__A1__))=0';
+      updateCellRefPlaceholder;
+
+    when ExcelTypes.CF_TYPE_NOBLANKS then
+      
+      rule.type := ExcelTypes.CF_TYPE_EXPRIS;
+      rule.template := ExcelTypes.CF_TEMP_CONTAINSNOBLANKS;
+      rule.fmla1 := 'LEN(TRIM(__A1__))>0';
+      updateCellRefPlaceholder;
+
+    when ExcelTypes.CF_TYPE_ERRORS then
+      
+      rule.type := ExcelTypes.CF_TYPE_EXPRIS;
+      rule.template := ExcelTypes.CF_TEMP_CONTAINSERRORS;
+      rule.fmla1 := 'ISERROR(__A1__)';
+      updateCellRefPlaceholder;
+
+    when ExcelTypes.CF_TYPE_NOERRORS then
+      
+      rule.type := ExcelTypes.CF_TYPE_EXPRIS;
+      rule.template := ExcelTypes.CF_TEMP_CONTAINSNOERRORS;
+      rule.fmla1 := 'NOT(ISERROR(__A1__))';
+      updateCellRefPlaceholder;
+      
+    when ExcelTypes.CF_TYPE_TOP then
+      
+      rule.type := ExcelTypes.CF_TYPE_FILTER;
+      rule.template := ExcelTypes.CF_TEMP_FILTER;
+      rule.percent := nvl(p_percent, false);
+      if rule.percent and p_param not between 1 and 100 then
+        error('Invalid rank percentage in conditional formatting rule');
+      elsif p_param not between 1 and 1000 then
+        error('Rank out of range in conditional formatting rule');
+      end if;
+      rule.param := p_param;
+      rule.bottom := false;
+
+    when ExcelTypes.CF_TYPE_BOTTOM then
+      
+      rule.type := ExcelTypes.CF_TYPE_FILTER;
+      rule.template := ExcelTypes.CF_TEMP_FILTER;
+      rule.percent := nvl(p_percent, false);
+      if rule.percent and p_param not between 1 and 100 then
+        error('Invalid rank percentage in conditional formatting rule');
+      elsif p_param not between 1 and 1000 then
+        error('Rank out of range in conditional formatting rule');
+      end if;
+      rule.param := p_param;
+      rule.bottom := true;
+
+    when ExcelTypes.CF_TYPE_EQUALABOVEAVERAGE then
+      
+      rule.type := ExcelTypes.CF_TYPE_EXPRIS;
+      rule.template := ExcelTypes.CF_TEMP_EQUALABOVEAVERAGE;
+    
+    when ExcelTypes.CF_TYPE_EQUALBELOWAVERAGE then
+      
+      rule.type := ExcelTypes.CF_TYPE_EXPRIS;
+      rule.template := ExcelTypes.CF_TEMP_EQUALBELOWAVERAGE;
+    
+    when ExcelTypes.CF_TYPE_ABOVEAVERAGE then
+      
+      rule.type := ExcelTypes.CF_TYPE_EXPRIS;
+      rule.template := ExcelTypes.CF_TEMP_ABOVEAVERAGE;
+      rule.param := nvl(p_param, 0);
+      if rule.param not between 0 and 3 then
+        error('Invalid standard deviation specified in conditional formatting rule');
+      end if;
+
+    when ExcelTypes.CF_TYPE_BELOWAVERAGE then
+      
+      rule.type := ExcelTypes.CF_TYPE_EXPRIS;
+      rule.template := ExcelTypes.CF_TEMP_BELOWAVERAGE;
+      rule.param := nvl(p_param, 0);
+      if rule.param not between 0 and 3 then
+        error('Invalid standard deviation specified in conditional formatting rule');
+      end if;
+      
+    when ExcelTypes.CF_TYPE_DUPLICATES then
+      
+      rule.type := ExcelTypes.CF_TYPE_EXPRIS;
+      rule.template := ExcelTypes.CF_TEMP_DUPLICATEVALUES;
+
+    when ExcelTypes.CF_TYPE_UNIQUES then
+      
+      rule.type := ExcelTypes.CF_TYPE_EXPRIS;
+      rule.template := ExcelTypes.CF_TEMP_UNIQUEVALUES;
+      
+    when ExcelTypes.CF_TYPE_COLORSCALE then
+      
+      rule.type := ExcelTypes.CF_TYPE_GRADIENT;
+      rule.template := ExcelTypes.CF_TEMP_GRADIENT;
+      
+      rule.cfvoList := p_cfvoList;
+      
+      if rule.cfvoList is null or rule.cfvoList.count = 0 then
+        error('No value objects found for this color scale rule');
+      elsif rule.cfvoList.count not in (2, 3) then
+        error('Wrong number of value objects for this color scale rule');
+      end if;
+      
+      for i in 1 .. rule.cfvoList.count loop
+        if not ExcelTypes.isValidCondFmtVOType(rule.cfvoList(i).type) then
+          error('Invalid value object type for this color scale rule');
+        end if;
+        if rule.cfvoList(i).color is null then
+          error('Missing color for this color scale point');
+        end if;
+        rule.cfvoList(i).color := ExcelTypes.validateColor(rule.cfvoList(i).color);
+      end loop;
+      
+    when ExcelTypes.CF_TYPE_DATABAR then
+      
+      rule.type := ExcelTypes.CF_TYPE_DATABAR;
+      rule.template := ExcelTypes.CF_TEMP_DATABAR;
+      
+      rule.cfvoList := p_cfvoList;
+      
+      if rule.cfvoList is null or rule.cfvoList.count = 0 then
+        error('No value objects found for this data bar rule');
+      elsif rule.cfvoList.count != 3 then
+        error('Wrong number of value objects for this data bar rule');
+      end if;
+      
+      -- validate the first two VOs
+      for i in 1 .. 2 loop
+        if not ExcelTypes.isValidCondFmtVOType(rule.cfvoList(i).type) then
+          error('Invalid value object type for this data bar rule');
+        end if;
+      end loop;
+      -- validate that the 3rd VO specifies a color
+      if rule.cfvoList(3).color is null then
+        error('Missing color specification for this data bar rule');
+      end if;
+      rule.cfvoList(3).color := ExcelTypes.validateColor(rule.cfvoList(3).color);
+      
+      rule.hideValue := nvl(p_hideValue, false);
+    
+    when ExcelTypes.CF_TYPE_ICONSET then
+      
+      rule.type := ExcelTypes.CF_TYPE_MULTISTATE;
+      rule.template := ExcelTypes.CF_TEMP_MULTISTATE;
+      
+      if not ExcelTypes.isValidCondFmtIconSet(p_iconSet) then
+        error('Invalid icon set for this conditional formatting rule');
+      end if;
+      
+      rule.iconSet := p_iconSet;
+      
+      requiredCfvoCount := case 
+                           when p_iconSet <= ExcelTypes.CF_ICONSET_3SYMBOLS2 then 2
+                           when p_iconSet <= ExcelTypes.CF_ICONSET_4TRAFFICLIGHTS then 3
+                           else 4
+                           end;
+                           
+      rule.cfvoList := p_cfvoList;
+      
+      if rule.cfvoList is null or rule.cfvoList.count = 0 then
+        error('No value objects found for this icon set rule');
+      elsif rule.cfvoList.count != requiredCfvoCount then
+        error('Wrong number of value objects for this icon set rule');
+      end if;
+      
+      rule.hideValue := nvl(p_hideValue, false);
+      rule.reverse := nvl(p_reverse, false);
+    
+    end case;
+
+    loadContext(p_ctxId);
+    currentCtx.sheetDefinitionMap(p_sheetId).cfRules.extend;
+    ruleIdx := currentCtx.sheetDefinitionMap(p_sheetId).cfRules.last;
+    currentCtx.sheetDefinitionMap(p_sheetId).cfRules(ruleIdx) := rule;
+
   end;
 
   procedure putCellImpl (

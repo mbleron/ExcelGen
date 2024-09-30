@@ -1701,12 +1701,12 @@ This function builds an instance of a cell font.
 function makeFont (
   p_name       in varchar2 default null
 , p_sz         in pls_integer default null
-, p_b          in boolean default false
-, p_i          in boolean default false
+, p_b          in boolean default null
+, p_i          in boolean default null
 , p_color      in varchar2 default null
 , p_u          in varchar2 default null
 , p_vertAlign  in varchar2 default null
-, p_strike     in boolean default false
+, p_strike     in boolean default null
 )
 return CT_Font;
 ```
@@ -1715,12 +1715,12 @@ Parameter|Description|Mandatory
 ---|---|---
 `p_name`|Font name.|Yes
 `p_sz`|Font size, in points.|Yes
-`p_b`|Bold font style (true\|false).|No
-`p_i`|Italic font style (true\|false).|No
+`p_b`|Bold font style (`true`\|`false`). <br/>A `null` value will be interpreted as `false`, except in the context of (differential) conditional formatting where the original property will be left unchanged.|No
+`p_i`|Italic font style (`true`\|`false`). <br/>A `null` value will be interpreted as `false`, except in the context of (differential) conditional formatting where the original property will be left unchanged.|No
 `p_color`|Font [color](#color-specification).|No
-`p_u`|Underline style. <br/>One of `none`, `single`, `double`, `singleAccounting`, `doubleAccounting`. Default is `none`.|No
+`p_u`|Underline style. <br/>One of `none`, `single`, `double`, `singleAccounting`, `doubleAccounting`. <br/>A `null` value will be interpreted as `none`, except in the context of conditional formatting where the original property will be left unchanged.|No
 `p_vertAlign`|Font vertical alignment: superscript or subscript. <br/>One of `superscript`, `subscript`, or `baseline` (default).|No
-`p_strike`|Font strikethrough effect (true\|false).|No
+`p_strike`|Font strikethrough effect (`true`\|`false`). <br/>A `null` value will be interpreted as `false`, except in the context of (differential) conditional formatting where the original property will be left unchanged.|No
 
 ---
 ### makePatternFill function
@@ -2320,6 +2320,91 @@ For instance, the following piece of code sets the horizontal alignment for colu
   ```
   Since the style declared for column #2 does not set the background color component, it inherits the sheet-level value, and since column-level value takes precedence, cell at B2 will have a violet background:  
 ![style-inheritance](./resources/style-inheritance.png)
+
+## Conditional Formatting
+
+type|type description|operator|value1|value2|param|percent|cfvoList|hideValue|iconSet|reverse
+--|--|--|--|--|--|--|--|--|--|--
+`CF_TYPE_CELLIS`|Cells are formatted based on their values.|[Relational operator](#relational-operators)|First operand formula|Second operand formula, when applicable
+`CF_TYPE_EXPR`|Cells are formatted based on the result of a formula.||Formula string
+`CF_TYPE_COLORSCALE`|A color scale is used to shade the cells based on their values.||||||A list of conditional formatting value objects. See expected content below.
+`CF_TYPE_DATABAR`|A data bar is drawn in each cell.||||||A list of conditional formatting value objects|Hide cell value
+`CF_TYPE_ICONSET`|An icon is displayed in the cell based on its value.||||||A list of conditional formatting value objects|Hide cell value|Icon set|If true, icons are shown in reversed order
+`CF_TYPE_TOP`|Cells are formatted when their values are in the top of the range of all values in the conditional formatting range.||||Rank|If true, the rank value represents a percentage of cells to format
+`CF_TYPE_BOTTOM`|Cells are formatted when their values are in the bottom of the range of all values in the conditional formatting range.||||Rank|If true, the rank value represents a percentage of cells to format
+`CF_TYPE_UNIQUES`|Formatting is applied when a cell value is unique among all other cells in the conditional formatting range.
+`CF_TYPE_DUPLICATES`|Formatting is applied when the cell value matches the value of other cells in the conditional formatting range.
+`CF_TYPE_TEXT`|Formatting is applied when the cell value contains specific text.|[Text operator](#text-operators)|String value to search
+`CF_TYPE_BLANKS`|Formatting is applied when the cell's value is blank.
+`CF_TYPE_NOBLANKS`|Formatting is applied when the cell's value is not blank.
+`CF_TYPE_ERRORS`|Formatting is applied when the cell contains an error.
+`CF_TYPE_NOERRORS`|Formatting is applied when the cell does not contain an error.
+`CF_TYPE_TIMEPERIOD`|Formatting is applied when the cell contains a date and that date matches the specified time period.|[Time period operator](#time-period-operators)
+`CF_TYPE_ABOVEAVERAGE`|Formatting is applied when the cell's value is above the average value of other cells in the conditional formatting range.||||Standard deviation, as an integer between 0 and 3
+`CF_TYPE_BELOWAVERAGE`|Formatting is applied when the cell's value is below the average value of other cells in the conditional formatting range.||||Standard deviation, as an integer between 0 and 3
+`CF_TYPE_EQUALABOVEAVERAGE`|Formatting is applied when the cell's value is equal to or greater than the average value of other cells in the conditional formatting range.				
+`CF_TYPE_EQUALBELOWAVERAGE`|Formatting is applied when the cell's value is equal to or less than the average value of other cells in the conditional formatting range.				
+
+
+### Relational Operators
+
+Operator|Description
+--|--
+`CF_OPER_BN`|The cell value lies between value1 and value2 (bounds included)
+`CF_OPER_NB`|The cell value does not lie between value1 and value2 (negation of `CF_OPER_BN`)
+`CF_OPER_EQ`|The cell value is equal to value1
+`CF_OPER_NE`|The cell value is not equal to value1
+`CF_OPER_GT`|The cell value is greater than value1
+`CF_OPER_LT`|The cell value is lower than value1
+`CF_OPER_GE`|The cell value is greater than or equal to value1
+`CF_OPER_LE`|The cell value is lower than or equal to value1
+
+### Text Operators
+
+Operator|Description
+--|--
+`CF_TEXTOPER_CONTAINS`|The cell contains the specified text
+`CF_TEXTOPER_NOTCONTAINS`|The cell does not contain the specified text
+`CF_TEXTOPER_BEGINSWITH`|The cell text begins with the specified text
+`CF_TEXTOPER_ENDSWITH`|The cell text ends with the specified text
+
+### Time Period Operators
+
+Operator|Description
+--|--
+`CF_TIMEPERIOD_TODAY`|The date specified by the cell is today's date
+`CF_TIMEPERIOD_YESTERDAY`|The date specified by the cell is yesterday's date
+`CF_TIMEPERIOD_LAST7DAYS`|The date specified by the cell is today's date or a day up to six days prior to today's date
+`CF_TIMEPERIOD_THISWEEK`|The date specified by the cell is a day in the one-week period beginning with the previous Sunday
+`CF_TIMEPERIOD_LASTWEEK`|The date specified by the cell is a day in the one-week period ending with the previous Saturday
+`CF_TIMEPERIOD_LASTMONTH`|The date specified by the cell is a day in the previous month
+`CF_TIMEPERIOD_TOMORROW`|The date specified by the cell is tomorrow's date
+`CF_TIMEPERIOD_NEXTWEEK`|The date specified by the cell is a day in the one-week period beginning with the next Sunday
+`CF_TIMEPERIOD_NEXTMONTH`|The date specified by the cell is a day in the next month
+`CF_TIMEPERIOD_THISMONTH`|The date specified by the cell is a day in the current month
+
+
+### Icon Sets
+Icon set|Description
+--|--
+`CF_ICONSET_3ARROWS`|![](./resources/CF_ICONSET_3ARROWS.png)
+`CF_ICONSET_3ARROWSGRAY`|![](./resources/CF_ICONSET_3ARROWSGRAY.png)
+`CF_ICONSET_3FLAGS`|![](./resources/CF_ICONSET_3FLAGS.png)
+`CF_ICONSET_3TRAFFICLIGHTS1`|![](./resources/CF_ICONSET_3TRAFFICLIGHTS1.png)
+`CF_ICONSET_3TRAFFICLIGHTS2`|![](./resources/CF_ICONSET_3TRAFFICLIGHTS2.png)
+`CF_ICONSET_3SIGNS`|![](./resources/CF_ICONSET_3SIGNS.png)
+`CF_ICONSET_3SYMBOLS`|![](./resources/CF_ICONSET_3SYMBOLS.png)
+`CF_ICONSET_3SYMBOLS2`|![](./resources/CF_ICONSET_3SYMBOLS2.png)
+`CF_ICONSET_4ARROWS`|![](./resources/CF_ICONSET_4ARROWS.png)
+`CF_ICONSET_4ARROWSGRAY`|![](./resources/CF_ICONSET_4ARROWSGRAY.png)
+`CF_ICONSET_4REDTOBLACK`|![](./resources/CF_ICONSET_4REDTOBLACK.png)
+`CF_ICONSET_4RATING`|![](./resources/CF_ICONSET_4RATING.png)
+`CF_ICONSET_4TRAFFICLIGHTS`|![](./resources/CF_ICONSET_4TRAFFICLIGHTS.png)
+`CF_ICONSET_5ARROWS`|![](./resources/CF_ICONSET_5ARROWS.png)
+`CF_ICONSET_5ARROWSGRAY`|![](./resources/CF_ICONSET_5ARROWSGRAY.png)
+`CF_ICONSET_5RATING`|![](./resources/CF_ICONSET_5RATING.png)
+`CF_ICONSET_5QUARTERS`|![](./resources/CF_ICONSET_5QUARTERS.png)
+
 
 ## Formula Support
 
