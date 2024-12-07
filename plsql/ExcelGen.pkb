@@ -3651,15 +3651,15 @@ create or replace package body ExcelGen is
     
     -- BEGIN Children
     if rule.template = ExcelTypes.CF_TEMP_EXPR then
-      stream_write(stream, '<formula>'||dbms_xmlgen.convert(ExcelFmla.parse(rule.fmla1, ExcelFmla.FMLATYPE_CELL, rule.sqref.boundingAreaFirstCellRef))||'</formula>');
+      stream_write(stream, '<formula>'||dbms_xmlgen.convert(ExcelFmla.parse(rule.fmla1, ExcelFmla.FMLATYPE_CONDFMT, rule.sqref.boundingAreaFirstCellRef))||'</formula>');
       if rule.param in (ExcelTypes.CF_OPER_BN, ExcelTypes.CF_OPER_NB) then
-        stream_write(stream, '<formula>'||dbms_xmlgen.convert(ExcelFmla.parse(rule.fmla2, ExcelFmla.FMLATYPE_CELL, rule.sqref.boundingAreaFirstCellRef))||'</formula>');
+        stream_write(stream, '<formula>'||dbms_xmlgen.convert(ExcelFmla.parse(rule.fmla2, ExcelFmla.FMLATYPE_CONDFMT, rule.sqref.boundingAreaFirstCellRef))||'</formula>');
       end if;
     
     elsif rule.template = ExcelTypes.CF_TEMP_FMLA 
        or rule.template between ExcelTypes.CF_TEMP_CONTAINSTEXT and ExcelTypes.CF_TEMP_TIMEPERIODTHISMONTH
     then
-      stream_write(stream, '<formula>'||dbms_xmlgen.convert(ExcelFmla.parse(rule.fmla1, ExcelFmla.FMLATYPE_CELL, rule.sqref.boundingAreaFirstCellRef))||'</formula>');
+      stream_write(stream, '<formula>'||dbms_xmlgen.convert(ExcelFmla.parse(rule.fmla1, ExcelFmla.FMLATYPE_CONDFMT, rule.sqref.boundingAreaFirstCellRef))||'</formula>');
       
     elsif rule.template = ExcelTypes.CF_TEMP_GRADIENT then
       stream_write(stream, '<colorScale>');
@@ -4875,7 +4875,9 @@ create or replace package body ExcelGen is
       error('Cannot paginate data in a multitable or mixed-content worksheet');
     end if;
     
-    ExcelFmla.setCurrentSheet(sd.sheetName);
+    if not sd.pageable then
+      ExcelFmla.setCurrentSheet(sd.sheetName);
+    end if;
     
     while not sd.done loop
       case ctx.fileType
@@ -6110,11 +6112,13 @@ create or replace package body ExcelGen is
       
       rule.type := ExcelTypes.CF_TYPE_EXPRIS;
       rule.template := ExcelTypes.CF_TEMP_EQUALABOVEAVERAGE;
+      rule.param := 0;
     
     when ExcelTypes.CF_TYPE_EQUALBELOWAVERAGE then
       
       rule.type := ExcelTypes.CF_TYPE_EXPRIS;
       rule.template := ExcelTypes.CF_TEMP_EQUALBELOWAVERAGE;
+      rule.param := 0;
     
     when ExcelTypes.CF_TYPE_ABOVEAVERAGE then
       
@@ -6650,7 +6654,7 @@ create or replace package body ExcelGen is
   is
   begin
     loadContext(p_ctxId);
-    setHeader(p_ctxId, currentCtx.sheetIndexMap(p_sheetName), p_style, p_frozen, p_autofilter);
+    setHeader(p_ctxId, currentCtx.sheetIndexMap(upper(p_sheetName)), p_style, p_frozen, p_autofilter);
   end;
 
   procedure setHeader (

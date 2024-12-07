@@ -2323,27 +2323,68 @@ For instance, the following piece of code sets the horizontal alignment for colu
 
 ## Conditional Formatting
 
-type|type description|operator|value1|value2|param|percent|cfvoList|hideValue|iconSet|reverse
---|--|--|--|--|--|--|--|--|--|--
-`CF_TYPE_CELLIS`|Cells are formatted based on their values.|[Relational operator](#relational-operators)|First operand formula|Second operand formula, when applicable
-`CF_TYPE_EXPR`|Cells are formatted based on the result of a formula.||Formula string
-`CF_TYPE_COLORSCALE`|A color scale is used to shade the cells based on their values.||||||A list of conditional formatting value objects. See expected content below.
-`CF_TYPE_DATABAR`|A data bar is drawn in each cell.||||||A list of conditional formatting value objects|Hide cell value
-`CF_TYPE_ICONSET`|An icon is displayed in the cell based on its value.||||||A list of conditional formatting value objects|Hide cell value|Icon set|If true, icons are shown in reversed order
-`CF_TYPE_TOP`|Cells are formatted when their values are in the top of the range of all values in the conditional formatting range.||||Rank|If true, the rank value represents a percentage of cells to format
-`CF_TYPE_BOTTOM`|Cells are formatted when their values are in the bottom of the range of all values in the conditional formatting range.||||Rank|If true, the rank value represents a percentage of cells to format
+Type|Description|Parameters
+--|--|--
+`CF_TYPE_CELLIS`|Cells are formatted based on their values.|<ul><li>`p_operator` = [relational operator](#relational-operators)</li><li>`p_value1` = first operand formula</li><li>`p_value2` = second operand formula, when applicable</li></ul>
+`CF_TYPE_EXPR`|Cells are formatted based on the result of a formula.|<ul><li>`p_value1` = formula string</li></ul>
+`CF_TYPE_COLORSCALE`|A color scale is used to shade the cells based on their values.|<ul><li>`p_cfvoList` = list of [CFVO](#cf_type_colorscale) specifying color points</li></ul>
+`CF_TYPE_DATABAR`|A data bar is drawn in each cell.|<ul><li>`p_cfvoList` = list of [CFVO](#cf_type_databar) specifying bar minimum, maximum and color </li><li>`p_hideValue` = hide cell value</li></ul>
+`CF_TYPE_ICONSET`|An icon is displayed in the cell based on its value.|<ul><li>`p_cfvoList` = list of [CFVO](#cf_type_iconset) specifying threshold values for each icon</li><li>`p_hideValue` = hide cell value</li><li>`p_iconSet` = [icon set](#icon-sets)</li><li>`p_reversed` = if true, icons are shown in reversed order</li></ul>
+`CF_TYPE_TOP`|Cells are formatted when their values are in the top N of all values in the conditional formatting range.|<ul><li>`p_param` = rank N</li><li>`p_percent` = if true, the rank value represents a percentage of cells to format</li></ul>
+`CF_TYPE_BOTTOM`|Cells are formatted when their values are in the bottom N of all values in the conditional formatting range.|<ul><li>`p_param` = rank N</li><li>`p_percent` = if true, the rank value represents a percentage of cells to format</li></ul>
 `CF_TYPE_UNIQUES`|Formatting is applied when a cell value is unique among all other cells in the conditional formatting range.
 `CF_TYPE_DUPLICATES`|Formatting is applied when the cell value matches the value of other cells in the conditional formatting range.
-`CF_TYPE_TEXT`|Formatting is applied when the cell value contains specific text.|[Text operator](#text-operators)|String value to search
+`CF_TYPE_TEXT`|Formatting is applied when the cell value contains specific text.|<ul><li>`p_operator` = [text operator](#text-operators)</li><li>`p_value1` = string value to search</li></ul>
 `CF_TYPE_BLANKS`|Formatting is applied when the cell's value is blank.
 `CF_TYPE_NOBLANKS`|Formatting is applied when the cell's value is not blank.
 `CF_TYPE_ERRORS`|Formatting is applied when the cell contains an error.
 `CF_TYPE_NOERRORS`|Formatting is applied when the cell does not contain an error.
-`CF_TYPE_TIMEPERIOD`|Formatting is applied when the cell contains a date and that date matches the specified time period.|[Time period operator](#time-period-operators)
-`CF_TYPE_ABOVEAVERAGE`|Formatting is applied when the cell's value is above the average value of other cells in the conditional formatting range.||||Standard deviation, as an integer between 0 and 3
-`CF_TYPE_BELOWAVERAGE`|Formatting is applied when the cell's value is below the average value of other cells in the conditional formatting range.||||Standard deviation, as an integer between 0 and 3
-`CF_TYPE_EQUALABOVEAVERAGE`|Formatting is applied when the cell's value is equal to or greater than the average value of other cells in the conditional formatting range.				
-`CF_TYPE_EQUALBELOWAVERAGE`|Formatting is applied when the cell's value is equal to or less than the average value of other cells in the conditional formatting range.				
+`CF_TYPE_TIMEPERIOD`|Formatting is applied when the cell contains a date and that date matches the specified time period.|<ul><li>`p_operator` = [time period operator](#time-period-operators)</li></ul>
+`CF_TYPE_ABOVEAVERAGE`|Formatting is applied when the cell's value is above the average value of other cells in the conditional formatting range.|<ul><li>`p_param` = standard deviation, as an integer between 0 and 3</li></ul>
+`CF_TYPE_BELOWAVERAGE`|Formatting is applied when the cell's value is below the average value of other cells in the conditional formatting range.|<ul><li>`p_param` = standard deviation, as an integer between 0 and 3</li></ul>
+`CF_TYPE_EQUALABOVEAVERAGE`|Formatting is applied when the cell's value is equal to or greater than the average value of other cells in the conditional formatting range.
+`CF_TYPE_EQUALBELOWAVERAGE`|Formatting is applied when the cell's value is equal to or less than the average value of other cells in the conditional formatting range.
+
+
+### Conditional Formatting Value Objects (CFVO)
+
+#### CF_TYPE_COLORSCALE
+
+**2-color scale**  
+
+The collection of CFVO must contain two objects representing the beginning and end of the scale:  
+* The first CFVO must be of type: `MIN`, `NUM`, `PERCENT`, `PERCENTILE`, `FORMULA`  
+* The second CFVO must be of type: `MAX`, `NUM`, `PERCENT`, `PERCENTILE`, `FORMULA`  
+
+CFVO value is ignored for types `MIN` and `MAX`.  
+CFVO color must be a valid [color](#color-specification).  
+
+**3-color scale**
+
+The collection of CFVO must contain three objects representing the beginning, midpoint and end points of the scale:  
+* The first CFVO must be of type: `MIN`, `NUM`, `PERCENT`, `PERCENTILE`, `FORMULA`  
+* The second CFVO must be of type: `NUM`, `PERCENT`, `PERCENTILE`, `FORMULA`  
+* The third CFVO must be of type: `MAX`, `NUM`, `PERCENT`, `PERCENTILE`, `FORMULA`  
+
+CFVO value is ignored for types `MIN` and `MAX`.  
+CFVO color must be a valid [color](#color-specification).  
+
+#### CF_TYPE_DATABAR
+
+The collection of CFVO must contain three objects:  
+* 2 value-only objects representing the minimum and maximum values of the data bar  
+  * The first CFVO must be of type: `MIN`, `NUM`, `PERCENT`, `PERCENTILE`, `FORMULA`  
+  * The second CFVO must be of type: `MAX`, `NUM`, `PERCENT`, `PERCENTILE`, `FORMULA` 
+* 1 color-only object giving the bar color    
+ 
+CFVO value is ignored for types `MIN` and `MAX`.  
+CFVO color must be a valid [color](#color-specification).  
+
+#### CF_TYPE_ICONSET
+
+The collection of CFVO specifies the thresholds used by the conditional formatting rule to determine which icons to display in the applied range. It must contain N-1 items where N is the number of icons in the set.  
+Allowed CFVO types are: `NUM`, `PERCENT`, `PERCENTILE`, `FORMULA`.  
+By default, the rule uses the greater-than-or-equal (>=) operator to determine the icon based on the CFVO value. It can be changed to greater-than (>) by setting the CFVO `gte` field to false.
 
 
 ### Relational Operators
