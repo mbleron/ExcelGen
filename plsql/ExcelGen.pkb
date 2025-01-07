@@ -61,6 +61,9 @@ create or replace package body ExcelGen is
     Marc Bleron       2024-07-21     Added hyperlink, excluded columns, table naming
     Marc Bleron       2024-08-14     Added makeCellRange, data validation
     Marc Bleron       2024-09-06     Conditional formatting
+    Marc Bleron       2024-12-07     Fixed sheetIndexMap access using upper-ized sheet name
+                                     Do not call ExcelFormula.setCurrentSheet for a pageable sheet
+                                     Fixed insertFirst/Last calls
 ====================================================================================== */
 
   VERSION_NUMBER     constant varchar2(16) := '4.3.0';
@@ -860,6 +863,7 @@ create or replace package body ExcelGen is
   end;
   
   procedure insertFirst (t in out nocopy dbLinkedList_t, nodeId in pls_integer) is
+    nextNodeId  pls_integer;
   begin
     if t.first is null then
       t.first := nodeId;
@@ -867,16 +871,19 @@ create or replace package body ExcelGen is
       t.heap(nodeId).prev := null;
       t.heap(nodeId).next := null;
     else
-      insertBefore(t, t.first+0, nodeId);
+      nextNodeId := t.first;
+      insertBefore(t, nextNodeId, nodeId);
     end if;
   end;
 
   procedure insertLast (t in out nocopy dbLinkedList_t, nodeId in pls_integer) is
+    prevNodeId  pls_integer;
   begin
     if t.last is null then
       insertFirst(t, nodeId);
     else
-      insertAfter(t, t.last+0, nodeId);
+      prevNodeId := t.last;
+      insertAfter(t, prevNodeId, nodeId);
     end if;
   end;
 
@@ -5290,6 +5297,7 @@ create or replace package body ExcelGen is
       error('Cannot paginate data in a multitable or mixed-content worksheet');
     end if;
     
+    -- temporary fix: do not set the current sheet name in formula context when pagination is enabled
     if not sd.pageable then
       ExcelFmla.setCurrentSheet(sd.sheetName);
     end if;
@@ -7045,7 +7053,7 @@ create or replace package body ExcelGen is
   is
   begin
     loadContext(p_ctxId);
-    setTableFormat(p_ctxId, currentCtx.sheetIndexMap(p_sheetName), p_style);
+    setTableFormat(p_ctxId, currentCtx.sheetIndexMap(upper(p_sheetName)), p_style);
   end;
 
   procedure setTableFormat (
@@ -7255,7 +7263,7 @@ create or replace package body ExcelGen is
   is
   begin
     loadContext(p_ctxId);
-    setBindVariableImpl(p_ctxId, currentCtx.sheetIndexMap(p_sheetName), p_bindName, anydata.ConvertNumber(p_bindValue), 1);
+    setBindVariableImpl(p_ctxId, currentCtx.sheetIndexMap(upper(p_sheetName)), p_bindName, anydata.ConvertNumber(p_bindValue), 1);
   end;
   
   -- DEPRECATED
@@ -7268,7 +7276,7 @@ create or replace package body ExcelGen is
   is
   begin
     loadContext(p_ctxId);
-    setBindVariableImpl(p_ctxId, currentCtx.sheetIndexMap(p_sheetName), p_bindName, anydata.ConvertVarchar2(p_bindValue), 1);
+    setBindVariableImpl(p_ctxId, currentCtx.sheetIndexMap(upper(p_sheetName)), p_bindName, anydata.ConvertVarchar2(p_bindValue), 1);
   end;
 
   -- DEPRECATED
@@ -7281,7 +7289,7 @@ create or replace package body ExcelGen is
   is
   begin
     loadContext(p_ctxId);
-    setBindVariableImpl(p_ctxId, currentCtx.sheetIndexMap(p_sheetName), p_bindName, anydata.ConvertDate(p_bindValue), 1);
+    setBindVariableImpl(p_ctxId, currentCtx.sheetIndexMap(upper(p_sheetName)), p_bindName, anydata.ConvertDate(p_bindValue), 1);
   end;
     
   procedure setBindVariable (
