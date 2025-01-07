@@ -3,7 +3,7 @@
 <p align="center"><img src="./resources/banner.png"/></p>
 
 ExcelGen is a PL/SQL utility to create Excel files (.xlsx, .xlsb) out of SQL data sources (query strings or cursors), with automatic pagination over multiple sheets.  
-It supports encryption, cell merging, various formatting options through a built-in API or CSS, table layout, formulas and defined names, and data validation.  
+It supports encryption, cell merging, various formatting options through a built-in API or CSS, table layout, formulas and defined names, data validation, and conditional formatting.  
 
 ## Content
 * [What's New in...](#whats-new-in)  
@@ -146,6 +146,11 @@ For simple requirements such as a single-table sheet, shortcut procedures and fu
 * Data validation
   * [addDataValidationRule](#adddatavalidationrule-procedure)
   * [setTableColumnValidationRule](#settablecolumnvalidationrule-procedure)
+* Conditional Formatting
+  * [addCondFormattingRule](#addcondformattingrule-procedure)
+  * [addTableCondFmtRule](#addtablecondfmtrule-procedure)
+  * [makeCondFmtStyle](#makecondfmtstyle-function)
+  * [makeCondFmtStyleCss](#makecondfmtstylecss-function)
 * Style management
   * [setDateFormat](#setdateformat-procedure)  
   * [setTimestampFormat](#settimestampformat-procedure)  
@@ -163,6 +168,8 @@ For simple requirements such as a single-table sheet, shortcut procedures and fu
   * [makeCellStyleCss](#makecellstylecss-function)  
   * [setDefaultStyle](#setdefaultstyle-procedure)  
   * [setRangeStyle](#setrangestyle-procedure)  
+  * [makeCondFmtStyle](#makecondfmtstyle-function)  
+  * [makeCondFmtStyleCss](#makecondfmtstylecss-function)  
 ---
 
 ### createContext function
@@ -583,6 +590,91 @@ Parameter|Description|Mandatory
 `p_promptTitle`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|No
 `p_refStyle1`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|No
 `p_refStyle2`|Cf. [addDataValidationRule](#adddatavalidationrule-procedure).|No
+
+---
+### addCondFormattingRule procedure
+
+Adds a conditional formatting rule to a collection of ranges.  
+Rule priorities are assigned in declaration order, i.e. first one has higher priority.  
+
+```sql
+procedure addCondFormattingRule (
+  p_ctxId       in ctxHandle
+, p_sheetId     in sheetHandle
+, p_type        in pls_integer
+, p_cellRange   in ExcelTypes.ST_Sqref
+, p_style       in ExcelGen.cfmtStyleHandle default null
+, p_operator    in pls_integer default null
+, p_value1      in varchar2 default null
+, p_value2      in varchar2 default null
+, p_param       in pls_integer default null
+, p_percent     in boolean default null
+, p_cfvoList    in ExcelTypes.CT_CfvoList default null
+, p_hideValue   in boolean default null
+, p_iconSet     in pls_integer default null
+, p_reverse     in boolean default null
+, p_stopIfTrue  in boolean default null
+, p_refStyle1   in pls_integer default null
+, p_refStyle2   in pls_integer default null
+)
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
+`p_type`|Rule type. <br/>See [Conditional Formatting Rule Types](#conditional-formatting-rule-types) for allowed values.|Yes
+`p_cellRange`|A sequence of ranges to which this formatting rule applies, as an `ExcelTypes.ST_Sqref` collection. <br/>Each range represents a rectangular area or a single cell. Helper functions [makeCellRef](#makecellref-function) and [makeCellRange](#makecellrange-function) may be used to create a range expression out of individual row and column indices. <br/>Following Excel conventions, the top-left cell of the rectangular bounding area of all ranges in the sequence will be used as a point of origin to resolve relative references occurring in this rule's formulas.|Yes
+`p_style`|Differential formatting style handle, as returned by [makeCondFmtStyle](#makecondfmtstyle-function) or [makeCondFmtStyleCss](#makecondfmtstylecss-function).|No
+`p_operator`|Relational, text or date operator. <br/>See [Relational Operators](#relational-operators), [Text Operators](#text-operators) and [Time Period Operators](#time-period-operators) for details and applicability.|No
+`p_value1`|See [Conditional Formatting Rule Types](#conditional-formatting-rule-types) for usage.|No
+`p_value2`|See [Conditional Formatting Rule Types](#conditional-formatting-rule-types) for usage.|No
+`p_param`|See [Conditional Formatting Rule Types](#conditional-formatting-rule-types) for usage.|No
+`p_percent`|See [Conditional Formatting Rule Types](#conditional-formatting-rule-types) for usage.|No
+`p_cfvoList`|See [Conditional Formatting Rule Types](#conditional-formatting-rule-types) for usage.|No
+`p_hideValue`|See [Conditional Formatting Rule Types](#conditional-formatting-rule-types) for usage.|No
+`p_iconSet`|See [Conditional Formatting Rule Types](#conditional-formatting-rule-types) for usage.|No
+`p_reverse`|See [Conditional Formatting Rule Types](#conditional-formatting-rule-types) for usage.|No
+`p_stopIfTrue`|"Stop If True" flag. <br/>Disable subsequent matching rules when this rule evaluates to true.|No
+`p_refStyle1`|Cell reference style of the first formula (`p_value1`). <br/>One of `ExcelFmla.REF_A1` (default) or `ExcelFmla.REF_R1C1`.|No
+`p_refStyle2`|Cell reference style of the second formula (`p_value2`).|No
+
+---
+### addTableCondFmtRule procedure
+
+Adds a conditional formatting rule to a column, row or entire table.    
+
+```sql
+procedure addTableCondFmtRule (
+  p_ctxId       in ctxHandle
+, p_sheetId     in sheetHandle
+, p_tableId     in tableHandle
+, p_columnId    in pls_integer
+, p_type        in pls_integer
+, p_style       in ExcelGen.cfmtStyleHandle default null
+, p_operator    in pls_integer default null
+, p_value1      in varchar2 default null
+, p_value2      in varchar2 default null
+, p_param       in pls_integer default null
+, p_percent     in boolean default null
+, p_cfvoList    in ExcelTypes.CT_CfvoList default null
+, p_hideValue   in boolean default null
+, p_iconSet     in pls_integer default null
+, p_reverse     in boolean default null
+, p_stopIfTrue  in boolean default null
+, p_refStyle1   in pls_integer default null
+, p_refStyle2   in pls_integer default null
+)
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_ctxId`|Context handle.|Yes
+`p_sheetId`|Sheet handle.|Yes
+`p_tableId`|Table handle.|Yes
+`p_columnId`|Column id (1-based index). <br/>If set to NULL, the rule applies to the whole row or table, depending on its type.|No
+
+See [addCondFormattingRule](#addcondformattingrule-procedure) for commons parameters.  
 
 ---
 ### addSheetFromQuery procedure and function
@@ -1913,6 +2005,36 @@ begin
                );
   ...
 ```
+---
+### makeCondFmtStyle function
+
+Similar to [makeCellStyle](#makecellstyle-function), this function is to be used in conjunction with Conditional Formatting routines [addCondFormattingRule](#addcondformattingrule-procedure) and [addTableCondFmtRule](#addtablecondfmtrule-procedure).  
+It builds an instance of a differential formatting cell style and returns a handle to it.  
+
+```sql
+function makeCondFmtStyle (
+  p_ctxId       in ctxHandle
+, p_numFmtCode  in varchar2 default null
+, p_font        in CT_Font default null
+, p_fill        in CT_Fill default null
+, p_border      in CT_Border default null
+, p_alignment   in CT_CellAlignment default null
+)
+return cfmtStyleHandle
+```
+---
+### makeCondFmtStyleCss function
+
+Similar to [makeCellStyleCss](#makecellstylecss-function), this function is to be used in conjunction with Conditional Formatting routines [addCondFormattingRule](#addcondformattingrule-procedure) and [addTableCondFmtRule](#addtablecondfmtrule-procedure).  
+It builds an instance of a differential formatting cell style from a CSS string, and returns a handle to it.  
+
+```sql
+function makeCondFmtStyleCss (
+  p_ctxId  in ctxHandle
+, p_css    in varchar2
+)
+return cfmtStyleHandle
+```
 
 ---
 ### putDefinedName procedure
@@ -2323,7 +2445,11 @@ For instance, the following piece of code sets the horizontal alignment for colu
 
 ## Conditional Formatting
 
-Type|Description|Parameters
+*(\*) Type constants from the ExcelTypes package*
+
+### Conditional Formatting Rule Types
+
+Type \*|Description|Parameters
 --|--|--
 `CF_TYPE_CELLIS`|Cells are formatted based on their values.|<ul><li>`p_operator` = [relational operator](#relational-operators)</li><li>`p_value1` = first operand formula</li><li>`p_value2` = second operand formula, when applicable</li></ul>
 `CF_TYPE_EXPR`|Cells are formatted based on the result of a formula.|<ul><li>`p_value1` = formula string</li></ul>
@@ -2348,48 +2474,72 @@ Type|Description|Parameters
 
 ### Conditional Formatting Value Objects (CFVO)
 
-#### CF_TYPE_COLORSCALE
+A CFVO is an auxiliary data structure used to specify the details of `CF_TYPE_COLORSCALE`, `CF_TYPE_DATABAR` and `CF_TYPE_ICONSET` rules.  
+It consists in the following fields:  
+Name|Data type|Description
+--|--|--
+`type`|int|CFVO type.
+`value`|string|CFVO value (denoted by X below).
+`gte`|bool|See [CF_TYPE_ICONSET](#cf_type_iconset).
+`color`|string|[Color](#color-specification) string, when applicable.
 
+
+#### CFVO Types
+
+Type \*|Description
+--|--
+`CFVO_NUM`|The value X itself.
+`CFVO_MIN`|The minimum value from the range of cells that the conditional formatting rule applies to.
+`CFVO_MAX`|The maximum value from the range of cells that the conditional formatting rule applies to.
+`CFVO_PERCENT`|The minimum value in the range of cells that the conditional formatting rule applies to, plus X percent of the difference between the maximum and minimum values in the range of cells that the conditional formatting rule applies to.
+`CFVO_PERCENTILE`|The minimum value of the cell that is in the X percentile of the range of cells that the conditional formatting rule applies to.
+`CFVO_FMLA`|The result of evaluating the formula in X.
+
+<br/>
+Following are the rule types that require CFVO:
+
+#### CF_TYPE_COLORSCALE
+---
 **2-color scale**  
 
 The collection of CFVO must contain two objects representing the beginning and end of the scale:  
-* The first CFVO must be of type: `MIN`, `NUM`, `PERCENT`, `PERCENTILE`, `FORMULA`  
-* The second CFVO must be of type: `MAX`, `NUM`, `PERCENT`, `PERCENTILE`, `FORMULA`  
+* The first CFVO must be of type: `CFVO_MIN`, `CFVO_NUM`, `CFVO_PERCENT`, `CFVO_PERCENTILE`, `CFVO_FMLA`  
+* The second CFVO must be of type: `CFVO_MAX`, `CFVO_NUM`, `CFVO_PERCENT`, `CFVO_PERCENTILE`, `CFVO_FMLA`  
 
-CFVO value is ignored for types `MIN` and `MAX`.  
+CFVO value is ignored for types `CFVO_MIN` and `CFVO_MAX`.  
 CFVO color must be a valid [color](#color-specification).  
 
 **3-color scale**
 
 The collection of CFVO must contain three objects representing the beginning, midpoint and end points of the scale:  
-* The first CFVO must be of type: `MIN`, `NUM`, `PERCENT`, `PERCENTILE`, `FORMULA`  
-* The second CFVO must be of type: `NUM`, `PERCENT`, `PERCENTILE`, `FORMULA`  
-* The third CFVO must be of type: `MAX`, `NUM`, `PERCENT`, `PERCENTILE`, `FORMULA`  
+* The first CFVO must be of type: `CFVO_MIN`, `CFVO_NUM`, `CFVO_PERCENT`, `CFVO_PERCENTILE`, `CFVO_FMLA`  
+* The second CFVO must be of type: `CFVO_NUM`, `CFVO_PERCENT`, `CFVO_PERCENTILE`, `CFVO_FMLA`  
+* The third CFVO must be of type: `CFVO_MAX`, `CFVO_NUM`, `CFVO_PERCENT`, `CFVO_PERCENTILE`, `CFVO_FMLA`  
 
-CFVO value is ignored for types `MIN` and `MAX`.  
+CFVO value is ignored for types `CFVO_MIN` and `CFVO_MAX`.  
 CFVO color must be a valid [color](#color-specification).  
 
 #### CF_TYPE_DATABAR
-
+---
 The collection of CFVO must contain three objects:  
 * 2 value-only objects representing the minimum and maximum values of the data bar  
-  * The first CFVO must be of type: `MIN`, `NUM`, `PERCENT`, `PERCENTILE`, `FORMULA`  
-  * The second CFVO must be of type: `MAX`, `NUM`, `PERCENT`, `PERCENTILE`, `FORMULA` 
+  * The first CFVO must be of type: `CFVO_MIN`, `CFVO_NUM`, `CFVO_PERCENT`, `CFVO_PERCENTILE`, `CFVO_FMLA`  
+  * The second CFVO must be of type: `CFVO_MAX`, `CFVO_NUM`, `CFVO_PERCENT`, `CFVO_PERCENTILE`, `CFVO_FMLA` 
 * 1 color-only object giving the bar color    
  
-CFVO value is ignored for types `MIN` and `MAX`.  
+CFVO value is ignored for types `CFVO_MIN` and `CFVO_MAX`.  
 CFVO color must be a valid [color](#color-specification).  
 
 #### CF_TYPE_ICONSET
-
+---
 The collection of CFVO specifies the thresholds used by the conditional formatting rule to determine which icons to display in the applied range. It must contain N-1 items where N is the number of icons in the set.  
-Allowed CFVO types are: `NUM`, `PERCENT`, `PERCENTILE`, `FORMULA`.  
+Allowed CFVO types are: `CFVO_NUM`, `CFVO_PERCENT`, `CFVO_PERCENTILE`, `CFVO_FMLA`.  
 By default, the rule uses the greater-than-or-equal (>=) operator to determine the icon based on the CFVO value. It can be changed to greater-than (>) by setting the CFVO `gte` field to false.
 
 
 ### Relational Operators
 
-Operator|Description
+Operator \*|Description
 --|--
 `CF_OPER_BN`|The cell value lies between value1 and value2 (bounds included)
 `CF_OPER_NB`|The cell value does not lie between value1 and value2 (negation of `CF_OPER_BN`)
@@ -2402,7 +2552,7 @@ Operator|Description
 
 ### Text Operators
 
-Operator|Description
+Operator \*|Description
 --|--
 `CF_TEXTOPER_CONTAINS`|The cell contains the specified text
 `CF_TEXTOPER_NOTCONTAINS`|The cell does not contain the specified text
@@ -2411,7 +2561,7 @@ Operator|Description
 
 ### Time Period Operators
 
-Operator|Description
+Operator \*|Description
 --|--
 `CF_TIMEPERIOD_TODAY`|The date specified by the cell is today's date
 `CF_TIMEPERIOD_YESTERDAY`|The date specified by the cell is yesterday's date
@@ -2424,9 +2574,8 @@ Operator|Description
 `CF_TIMEPERIOD_NEXTMONTH`|The date specified by the cell is a day in the next month
 `CF_TIMEPERIOD_THISMONTH`|The date specified by the cell is a day in the current month
 
-
 ### Icon Sets
-Icon set|Description
+Icon set \*|Description
 --|--
 `CF_ICONSET_3ARROWS`|![](./resources/CF_ICONSET_3ARROWS.png)
 `CF_ICONSET_3ARROWSGRAY`|![](./resources/CF_ICONSET_3ARROWSGRAY.png)
@@ -2492,6 +2641,7 @@ The list of supported functions is available [here](https://github.com/mbleron/E
 * [Formulas and Names](#formulas-and-names)
 * [Hyperlinks](#hyperlinks)
 * [Data validation](#data-validation)
+* [Conditional formatting](#conditional-formatting-1)
 
 #### Single query to sheet mapping, with header formatting
 [employees.sql](./test_cases/employees.sql) &#8594; [employees.xlsx](./samples/employees.xlsx)
@@ -2847,6 +2997,10 @@ end;
 Creates a workbook with various data validation rules.  
 [data-validation.sql](./test_cases/data-validation.sql) &#8594; [test-dataval.xlsx](./samples/test-dataval.xlsx)
 
+#### Conditional formatting
+Creates a workbook with various conditional formatting rules.  
+[cond-formatting.sql](./test_cases/cond-formatting.sql) &#8594; [cond-formatting.xlsx](./samples/cond-formatting.xlsx)
+
 ## Copyright and license
 
-Copyright 2020-2024 Marc Bleron. Released under MIT license.
+Copyright 2020-2025 Marc Bleron. Released under MIT license.

@@ -3,7 +3,7 @@ create or replace package ExcelGen is
 
   MIT License
 
-  Copyright (c) 2020-2024 Marc Bleron
+  Copyright (c) 2020-2025 Marc Bleron
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -559,6 +559,8 @@ create or replace package ExcelGen is
   , p_iconSet     in pls_integer default null
   , p_reverse     in boolean default null
   , p_stopIfTrue  in boolean default null
+  , p_refStyle1   in pls_integer default null
+  , p_refStyle2   in pls_integer default null
   );
 
   procedure setBindVariable (
@@ -745,6 +747,27 @@ create or replace package ExcelGen is
   , p_tableId  in pls_integer
   , p_rowId    in pls_integer
   , p_style    in cellStyleHandle
+  );
+
+  procedure addTableCondFmtRule (
+    p_ctxId       in ctxHandle
+  , p_sheetId     in sheetHandle
+  , p_tableId     in tableHandle
+  , p_columnId    in pls_integer
+  , p_type        in pls_integer
+  , p_style       in ExcelGen.cfmtStyleHandle default null
+  , p_operator    in pls_integer default null
+  , p_value1      in varchar2 default null
+  , p_value2      in varchar2 default null
+  , p_param       in pls_integer default null
+  , p_percent     in boolean default null
+  , p_cfvoList    in ExcelTypes.CT_CfvoList default null
+  , p_hideValue   in boolean default null
+  , p_iconSet     in pls_integer default null
+  , p_reverse     in boolean default null
+  , p_stopIfTrue  in boolean default null
+  , p_refStyle1   in pls_integer default null
+  , p_refStyle2   in pls_integer default null
   );
 
   -- DEPRECATED
