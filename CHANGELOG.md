@@ -1,5 +1,17 @@
 # Change Log
 
+## [4.3.0] - 2025-01-07
+
+### Added
+
+* Conditional Formatting (#2)
+
+## [4.2.1] - 2024-12-07
+
+### Fixed
+
+* Issues #66, #67
+
 ## [4.2] - 2024-09-03
 
 ### Added
