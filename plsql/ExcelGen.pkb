@@ -4658,11 +4658,15 @@ create or replace package body ExcelGen is
     headerXfId      pls_integer;
     
     emptyPartition  exception;
+
+    dvRules         ExcelTypes.CT_DataValidations := sd.dvRules;
+    cfRules         ExcelTypes.CT_CfRules := sd.cfRules;
     
   begin
     
     sheet.name := sd.sheetName;
     sheet.tableParts := CT_TableParts();
+    sd.sharedFmlaMap.delete;
     
     stream := xutl_xlsb.new_stream();
     xutl_xlsb.put_BeginSheet(stream);
@@ -4933,8 +4937,8 @@ create or replace package body ExcelGen is
                              ).expr
                            )
             );
-            sd.dvRules.extend;
-            sd.dvRules(sd.dvRules.last) := t.columnMap(columnId).dvRule;
+            dvRules.extend;
+            dvRules(dvRules.last) := t.columnMap(columnId).dvRule;
           end if;
             
           -- column conditional formatting
@@ -4951,8 +4955,8 @@ create or replace package body ExcelGen is
                                ).expr
                              )
               );
-              sd.cfRules.extend;
-              sd.cfRules(sd.cfRules.last) := t.columnMap(columnId).cfRules(i);
+              cfRules.extend;
+              cfRules(cfRules.last) := t.columnMap(columnId).cfRules(i);
             end loop;
           end if;
             
@@ -4973,8 +4977,8 @@ create or replace package body ExcelGen is
                              ).expr
                            )
             );
-            sd.cfRules.extend;
-            sd.cfRules(sd.cfRules.last) := t.cfRules(i);        
+            cfRules.extend;
+            cfRules(cfRules.last) := t.cfRules(i);        
           end loop;
         end if;
       
@@ -5145,13 +5149,13 @@ create or replace package body ExcelGen is
     part.rels := CT_Relationships();
 
     -- conditional formatting
-    if sd.cfRules.count != 0 then
-      xutl_xlsb.put_CondFmts(stream, sd.cfRules);
+    if cfRules.count != 0 then
+      xutl_xlsb.put_CondFmts(stream, cfRules);
     end if;
       
     -- data validations
-    if sd.dvRules.count != 0 then
-      xutl_xlsb.put_DVals(stream, sd.dvRules);
+    if dvRules.count != 0 then
+      xutl_xlsb.put_DVals(stream, dvRules);
     end if;
       
     -- table parts
