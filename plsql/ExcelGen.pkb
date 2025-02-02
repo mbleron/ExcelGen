@@ -64,9 +64,11 @@ create or replace package body ExcelGen is
     Marc Bleron       2024-12-07     Fixed sheetIndexMap access using upper-ized sheet name
                                      Do not call ExcelFormula.setCurrentSheet for a pageable sheet
                                      Fixed insertFirst/Last calls
+    Marc Bleron       2025-01-31     Fixed corrupted sheet references in formulas after a pageable sheet
+                                     More fixes related to pageable sheets and virtual columns
 ====================================================================================== */
 
-  VERSION_NUMBER     constant varchar2(16) := '4.3.0';
+  VERSION_NUMBER     constant varchar2(16) := '4.3.1';
 
   -- OPC part MIME types
   MT_STYLES          constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml';
@@ -155,7 +157,7 @@ create or replace package body ExcelGen is
   type data_map_t is table of data_t index by pls_integer;
   
   type cell_ref_t is record (value varchar2(10), c varchar2(3), cn pls_integer, r pls_integer); 
-  type range_t is record (expr varchar2(32), start_ref cell_ref_t, end_ref cell_ref_t);
+  type range_t is record (expr varchar2(32), start_ref cell_ref_t, end_ref cell_ref_t, is_null boolean := true);
   
   type intList_t is table of pls_integer;
   type intSet_t is table of pls_integer index by pls_integer;
@@ -185,6 +187,7 @@ create or replace package body ExcelGen is
   , supertype pls_integer
   , excluded  boolean := false
   , fmla      formula_t
+  , virtual   boolean := false
   );
     
   type column_list_t is table of column_t;
@@ -978,6 +981,7 @@ create or replace package body ExcelGen is
     end if;
     range.end_ref := makeCellRef(endCol, endRow);
     range.expr := range.start_ref.value || case when range.end_ref.value is not null then ':'||range.end_ref.value end;
+    range.is_null := false;
     return range;
   end;
   
@@ -1083,6 +1087,7 @@ create or replace package body ExcelGen is
     end if;
     
     range.expr := expr;
+    range.is_null := false;
     
     return range;
     
@@ -2246,7 +2251,6 @@ create or replace package body ExcelGen is
       col.name := dbColumnList(i).col_name;
       col.type := dbColumnList(i).col_type;
       col.scale := dbColumnList(i).col_scale;
-      --col.hasLink := false;
       col.excluded := ( p_excludeSet.integers.exists(i) or p_excludeSet.strings.exists(col.name) );
       
       insertLast(cols, node(col));
@@ -2336,6 +2340,13 @@ create or replace package body ExcelGen is
       end if;
     end loop;
     
+  end;
+  
+  procedure closeCursor (meta in out nocopy sql_metadata_t)
+  is
+  begin
+    debug('close cursor');
+    dbms_sql.close_cursor(meta.cursorNumber);
   end;
 
   procedure prepareNumberValue (data in out nocopy data_t, v in number)
@@ -2430,7 +2441,7 @@ create or replace package body ExcelGen is
       data.db_type := sqlMeta.columnList(i).type;
       dbId := sqlMeta.columnList(i).dbId;
 
-      if data.st != ST_FORMULA then
+      if not sqlMeta.columnList(i).virtual then
 
         case data.db_type
         when dbms_sql.VARCHAR2_TYPE then
@@ -2476,7 +2487,6 @@ create or replace package body ExcelGen is
       
       else
         
-        --data.varchar2_value := sqlMeta.columnList(i).fmla.expr;
         null;
       
       end if;
@@ -2688,7 +2698,6 @@ create or replace package body ExcelGen is
   , tableStyleName     in varchar2
   , columnMap          in table_column_map_t
   , tableName          in varchar2 default null
-  , isEmpty            in boolean default false
   , showFirstColumn    in boolean
   , showLastColumn     in boolean
   , showRowStripes     in boolean
@@ -2709,13 +2718,8 @@ create or replace package body ExcelGen is
     else
       tab.name := tableName;
     end if;
-    -- if the table is declared over an empty dataset, extends its range by one row down to make it legal in Excel
-    if isEmpty then
-      tab.ref := makeRangeImpl(tableRange.start_ref.c, tableRange.start_ref.r, tableRange.end_ref.c, tableRange.end_ref.r + 1);
-    else
-      tab.ref := tableRange;
-    end if;
     
+    tab.ref := tableRange;
     tab.showHeader := nvl(showHeader, false);
     tab.autoFilter := nvl(tableAutoFilter, false);
     tab.styleName := tableStyleName;
@@ -3081,18 +3085,6 @@ create or replace package body ExcelGen is
     end if;
   end;
 
-  procedure putNameList (
-    ctx    in out nocopy context_t
-  , names  in ExcelTypes.CT_DefinedNames
-  )
-  is
-  begin
-    for i in 1 .. names.count loop
-      ctx.names.extend;
-      ctx.names(ctx.names.last) := names(i);
-    end loop;
-  end;
-
   procedure writeRowStart (
     stream  in out nocopy stream_t
   , r       in row_t
@@ -3248,8 +3240,6 @@ create or replace package body ExcelGen is
       , cellRef  => cell.c||to_char(cell.r)
       , refStyle => cell.f.refStyle
       );
-      -- retrieving generated names from formula context and append to existing collection
-      putNameList(ctx, Excelfmla.getNames());
     
     end case;
         
@@ -3257,12 +3247,14 @@ create or replace package body ExcelGen is
 
   procedure setAnchorRowOffset (sd in sheet_definition_t, anchorRef in out nocopy anchorRef_t) is
     anchorTable         table_t;
-    anchorTableRowSpan  pls_integer;
+    anchorTableRowSpan  pls_integer := 0;
   begin
     if anchorRef.tableId is not null then
       anchorTable := sd.tableList(anchorRef.tableId);
       if anchorRef.anchorPosition in (BOTTOM_LEFT,BOTTOM_RIGHT) then
-        anchorTableRowSpan := anchorTable.range.end_ref.r - anchorTable.range.start_ref.r + 1;
+        if not anchorTable.range.is_null then
+          anchorTableRowSpan := anchorTable.range.end_ref.r - anchorTable.range.start_ref.r + 1;
+        end if;
         anchorRef.rowOffset := anchorTable.anchorRef.rowOffset + anchorTableRowSpan - 1 + anchorRef.rowOffset;
       elsif anchorRef.anchorPosition in (TOP_LEFT,TOP_RIGHT) then
         anchorRef.rowOffset := anchorTable.anchorRef.rowOffset + anchorRef.rowOffset;
@@ -3355,7 +3347,7 @@ create or replace package body ExcelGen is
     ctxId       in ctxHandle
   , name        in varchar2
   , value       in varchar2
-  , sheetId     in sheetHandle
+  , sheetName   in varchar2
   , cellRef     in varchar2 default null
   , comment     in varchar2 default null
   , hidden      in boolean default false
@@ -3369,9 +3361,7 @@ create or replace package body ExcelGen is
   begin
     loadContext(ctxId);
     
-    if sheetId is not null then
-      definedName.scope := currentCtx.sheetDefinitionMap(sheetId).sheetName;
-    end if;
+    definedName.scope := sheetName;
     
     nameKey := upper(case when definedName.scope is not null then definedName.scope || '!' end || name);
     if currentCtx.nameMap.exists(nameKey) then
@@ -3394,6 +3384,10 @@ create or replace package body ExcelGen is
     
     currentCtx.names(definedName.idx) := definedName;
     currentCtx.nameMap(nameKey) := definedName;
+    
+    if definedName.builtIn then
+      ExcelFmla.addDefinedName(definedName);
+    end if;
   
   end;
 
@@ -4088,12 +4082,19 @@ create or replace package body ExcelGen is
     partitionStart  pls_integer;
     partitionStop   pls_integer;
     
-    isSheetEmpty    boolean := true;
+    hasRange        boolean;
     headerXfId      pls_integer;
+    
+    emptyPartition  exception;
+    
+    dvRules         ExcelTypes.CT_DataValidations := sd.dvRules;
+    cfRules         ExcelTypes.CT_CfRules := sd.cfRules;
     
   begin
     
+    sheet.name := sd.sheetName;
     sheet.tableParts := CT_TableParts();
+    sd.sharedFmlaMap.delete;
     
     stream := new_stream(); 
     stream_write(stream, '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">');
@@ -4215,8 +4216,32 @@ create or replace package body ExcelGen is
       partitionStart := t.sqlMetadata.r_num + nrows;
       partitionStop := partitionStart + t.sqlMetadata.partitionSize - 1;
       
-      isSheetEmpty := t.isEmpty and t.sqlMetadata.partitionId != 0;
+      if sd.pageable then
+        -- discard empty non-first partition
+        if t.isEmpty and t.sqlMetadata.partitionId != 0 then
+          closeCursor(t.sqlMetadata);
+          sd.done := true;
+          dbms_lob.freetemporary(stream.content);
+          raise emptyPartition;
+        end if;
+              
+        -- compute pageable sheet name here so that it can be passed to formula context
+        if t.sqlMetadata.partitionBySize then
+          t.sqlMetadata.partitionId := t.sqlMetadata.partitionId + 1;
+          -- t is local, don't forget to write it back to sheet def
+          sd.tableList(t.id).sqlMetadata.partitionId := t.sqlMetadata.partitionId;
+          sheet.name := replace(sheet.name, '${PNUM}', to_char(t.sqlMetadata.partitionId));
+          sheet.name := replace(sheet.name, '${PSTART}', to_char(partitionStart));
+          sheet.name := replace(sheet.name, '${PSTOP}', to_char(t.sqlMetadata.r_num));
+        end if;
+          
+        debug('Expanded sheet name='||sheet.name);
       
+        ExcelFmla.putSheet(sheet.name);
+        ExcelFmla.setCurrentSheet(sheet.name);
+      end if;      
+      
+      -- data rows
       while nrows != 0 loop
         
         r.id := r.id + 1;
@@ -4230,6 +4255,7 @@ create or replace package body ExcelGen is
         
         -- read current row
         dataMap := getSqlData(t.sqlMetadata);
+        
         for i in 1 .. t.sqlMetadata.columnList.count loop
           
           if not t.sqlMetadata.columnList(i).excluded then
@@ -4265,8 +4291,6 @@ create or replace package body ExcelGen is
                 else
                   cell.f.hasRef := false;
                 end if;
-              --else
-              --  cell.f := null;
               end if;
             end if;
             
@@ -4308,49 +4332,39 @@ create or replace package body ExcelGen is
       debug(utl_lms.format_message('end fetch: sheetId=%d tableId=%d rowCount=%d', sd.sheetIndex, tId, t.sqlMetadata.r_num));
       
       if nrows = 0 then
-        debug('close cursor');
-        dbms_sql.close_cursor(t.sqlMetadata.cursorNumber);
+        closeCursor(t.sqlMetadata);
         sd.done := true;
       end if;
       
-      t.range := makeRangeImpl(t.sqlMetadata.columnList(t.sqlMetadata.visibleColumnSet.first).colRef
-                         , t.anchorRef.rowOffset
-                         , t.sqlMetadata.columnList(t.sqlMetadata.visibleColumnSet.last).colRef
-                         , cell.r);
-    
-      if t.formatAsTable and not isSheetEmpty then
-        tableId := addTableLayout(ctx, t.range, t.header.show, t.header.autoFilter, t.tableStyle, t.columnMap, t.tableName, t.isEmpty
+      hasRange := t.header.show or not t.isEmpty or ( t.isEmpty and t.formatAsTable );
+      
+      if hasRange then
+        t.range := makeRangeImpl(
+                     t.sqlMetadata.columnList(t.sqlMetadata.visibleColumnSet.first).colRef
+                   , t.anchorRef.rowOffset
+                   , t.sqlMetadata.columnList(t.sqlMetadata.visibleColumnSet.last).colRef
+                   -- if the table is declared over an empty dataset, extends its range by one row down to make it legal in Excel
+                   , cell.r + case when t.formatAsTable and t.isEmpty then 1 else 0 end
+                   );
+      end if;
+           
+      if t.formatAsTable then
+        tableId := addTableLayout(ctx, t.range, t.header.show, t.header.autoFilter, t.tableStyle, t.columnMap, t.tableName
                                  , t.showFirstColumn, t.showLastColumn, t.showRowStripes, t.showColumnStripes);
         sheet.tableParts.extend;
         sheet.tableParts(sheet.tableParts.last) := tableId;
       end if;
       
       -- column-level data validation and conditional formatting
-      columnId := t.columnMap.first;
-      while columnId is not null loop
-        
-        -- column data validation
-        if t.columnMap(columnId).dvRule.type is not null then
-          setSqref(
-            sqref     => t.columnMap(columnId).dvRule.sqref
-          , cellRange => ExcelTypes.ST_Sqref(
-                           makeRangeImpl(
-                             t.sqlMetadata.visibleColumnSet(columnId)
-                           , t.range.start_ref.r + case when t.header.show then 1 else 0 end
-                           , t.sqlMetadata.visibleColumnSet(columnId)
-                           , t.range.end_ref.r
-                           ).expr
-                         )
-          );
-          sd.dvRules.extend;
-          sd.dvRules(sd.dvRules.last) := t.columnMap(columnId).dvRule;
-        end if;
-        
-        -- column conditional formatting
-        if t.columnMap(columnId).cfRules is not null and t.columnMap(columnId).cfRules.count != 0 then
-          for i in 1 .. t.columnMap(columnId).cfRules.count loop     
+      if not t.isEmpty then
+      
+        columnId := t.columnMap.first;
+        while columnId is not null loop
+          
+          -- column data validation
+          if t.columnMap(columnId).dvRule.type is not null then
             setSqref(
-              sqref     => t.columnMap(columnId).cfRules(i).sqref
+              sqref     => t.columnMap(columnId).dvRule.sqref
             , cellRange => ExcelTypes.ST_Sqref(
                              makeRangeImpl(
                                t.sqlMetadata.visibleColumnSet(columnId)
@@ -4360,31 +4374,51 @@ create or replace package body ExcelGen is
                              ).expr
                            )
             );
-            sd.cfRules.extend;
-            sd.cfRules(sd.cfRules.last) := t.columnMap(columnId).cfRules(i);
+            dvRules.extend;
+            dvRules(dvRules.last) := t.columnMap(columnId).dvRule;
+          end if;
+          
+          -- column conditional formatting
+          if t.columnMap(columnId).cfRules is not null and t.columnMap(columnId).cfRules.count != 0 then
+            for i in 1 .. t.columnMap(columnId).cfRules.count loop     
+              setSqref(
+                sqref     => t.columnMap(columnId).cfRules(i).sqref
+              , cellRange => ExcelTypes.ST_Sqref(
+                               makeRangeImpl(
+                                 t.sqlMetadata.visibleColumnSet(columnId)
+                               , t.range.start_ref.r + case when t.header.show then 1 else 0 end
+                               , t.sqlMetadata.visibleColumnSet(columnId)
+                               , t.range.end_ref.r
+                               ).expr
+                             )
+              );
+              cfRules.extend;
+              cfRules(cfRules.last) := t.columnMap(columnId).cfRules(i);
+            end loop;
+          end if;
+          
+          columnId := t.columnMap.next(columnId);
+        end loop;
+        
+        -- table-level conditional formatting
+        if t.cfRules is not null and t.cfRules.count != 0 then
+          for i in 1 .. t.cfRules.count loop
+            setSqref(
+              sqref     => t.cfRules(i).sqref
+            , cellRange => ExcelTypes.ST_Sqref(
+                             makeRangeImpl(
+                               t.range.start_ref.c
+                             , t.range.start_ref.r + case when t.header.show then 1 else 0 end
+                             , t.range.end_ref.c
+                             , t.range.end_ref.r
+                             ).expr
+                           )
+            );
+            cfRules.extend;
+            cfRules(cfRules.last) := t.cfRules(i);        
           end loop;
         end if;
-        
-        columnId := t.columnMap.next(columnId);
-      end loop;
       
-      -- table-level conditional formatting
-      if t.cfRules is not null and t.cfRules.count != 0 then
-        for i in 1 .. t.cfRules.count loop
-          setSqref(
-            sqref     => t.cfRules(i).sqref
-          , cellRange => ExcelTypes.ST_Sqref(
-                           makeRangeImpl(
-                             t.range.start_ref.c
-                           , t.range.start_ref.r + case when t.header.show then 1 else 0 end
-                           , t.range.end_ref.c
-                           , t.range.end_ref.r
-                           ).expr
-                         )
-          );
-          sd.cfRules.extend;
-          sd.cfRules(sd.cfRules.last) := t.cfRules(i);        
-        end loop;
       end if;
       
       sd.tableList(tId) := t;
@@ -4469,146 +4503,129 @@ create or replace package body ExcelGen is
       end loop;
       
       sd.done := true;
-      isSheetEmpty := false;
     
     end if;
     
     stream_write(stream, '</sheetData>');
     -- END sheetData
     
-    -- force empty sheet if no tables or cells declared
-    if sd.tableList.count = 0 and sd.floatingCells.count = 0 then
-      isSheetEmpty := false;
+    if sd.tableList.count = 0 then
       sd.done := true;
     end if;
     
-    if not isSheetEmpty then
-    
-      -- if there's only one table, set sheet-level autoFilter accordingly
-      if t.header.show and t.header.autoFilter then
-        if not t.formatAsTable then
+    -- if there's only one table, set sheet-level autoFilter accordingly
+    if sd.tableList.count = 1 and t.header.show and t.header.autoFilter then
+      if not t.formatAsTable then
         
-          putNameImpl(
-            ctxId   => currentCtxId
-          , name    => '_xlnm._FilterDatabase'
-          , value   => '''' || sd.sheetName || '''!' || getRangeExpr(t.range, true)
-          , sheetId => sd.sheetIndex
-          , hidden  => true
-          , builtIn => true
-          );
+        putNameImpl(
+          ctxId     => currentCtxId
+        , name      => '_xlnm._FilterDatabase'
+        , value     => '''' || sheet.name || '''!' || getRangeExpr(t.range, true)
+        , sheetName => sheet.name
+        , hidden    => true
+        , builtIn   => true
+        );
           
-          ExcelFmla.putName('_xlnm._FilterDatabase', sd.sheetName);
+        stream_write(stream, '<autoFilter ref="'||getRangeExpr(t.range)||'"/>');
           
-          stream_write(stream, '<autoFilter ref="'||getRangeExpr(t.range)||'"/>');
-          
-        end if;
       end if;
-      
-      -- merged cells
-      if sd.mergedCells.count != 0 then
-        stream_write(stream, '<mergeCells count="'||to_char(sd.mergedCells.count)||'">');
-        for i in 1 .. sd.mergedCells.count loop
-          cellSpan := sd.mergedCells(i);
-          setAnchorRowOffset(sd, cellSpan.anchorRef);
-          setAnchorColOffset(sd, cellSpan.anchorRef);
-          stream_write(stream, '<mergeCell ref="'||makeRangeImpl(cellSpan).expr||'"/>');
-        end loop;
-        stream_write(stream, '</mergeCells>');
-      end if;
-      
-      -- new sheet
-      ctx.workbook.sheets.extend;
-      sheet.sheetId := ctx.workbook.sheets.last;
-      sheet.name := sd.sheetName;
-      if t.sqlMetadata.partitionBySize then
-        t.sqlMetadata.partitionId := t.sqlMetadata.partitionId + 1;
-        -- t is local, don't forget to write it back to sheet def
-        sd.tableList(t.id).sqlMetadata.partitionId := t.sqlMetadata.partitionId;
-        sheet.name := replace(sheet.name, '${PNUM}', to_char(t.sqlMetadata.partitionId));
-        sheet.name := replace(sheet.name, '${PSTART}', to_char(partitionStart));
-        sheet.name := replace(sheet.name, '${PSTOP}', to_char(t.sqlMetadata.r_num));
-      end if;
-
-      -- check name validity
-      if translate(sheet.name, '_\/*?:[]', '_') != sheet.name 
-         or substr(sheet.name, 1, 1) = '''' 
-         or substr(sheet.name, -1) = ''''
-         or length(sheet.name) > 31 
-      then
-        error('Invalid sheet name: %s', sheet.name);
-      end if;
-        
-      -- check name uniqueness (case-insensitive)
-      if ctx.workbook.sheetMap.exists(upper(sheet.name)) then
-        error('Duplicate sheet name: %s', sheet.name);
-      end if;
-      
-      sheet.state := sd.state;
-      -- save idx of the first visible sheet
-      if ctx.workbook.firstSheet is null and sheet.state = ST_VISIBLE then
-        ctx.workbook.firstSheet := sheet.sheetId;
-      end if;
-        
-      sheet.partName := 'xl/worksheets/sheet'||to_char(sheet.sheetId)||'.xml';
-
-      -- new sheet part
-      part.name := sheet.partName;
-      part.contentType := MT_WORKSHEET;
-      part.rels := CT_Relationships();
-      
-      -- conditional formatting
-      for i in 1 .. sd.cfRules.count loop
-        writeCondFmtRule(stream, sd.cfRules(i), i);
-      end loop;
-      
-      -- data validations
-      if sd.dvRules.count != 0 then
-        stream_write(stream, '<dataValidations count="'||to_char(sd.dvRules.count)||'">');
-        for i in 1 .. sd.dvRules.count loop
-          writeDataValidationRule(stream, sd.dvRules(i));
-        end loop;
-        stream_write(stream, '</dataValidations>');
-      end if;
-      
-      -- table parts
-      if sheet.tableParts.count != 0 then
-        stream_write(stream, '<tableParts count="'||to_char(sheet.tableParts.count)||'">');
-        for i in 1 .. sheet.tableParts.count loop
-          rId := addRelationship(part, RS_TABLE, ctx.workbook.tables(sheet.tableParts(i)).partName);
-          stream_write(stream, '<tablePart r:id="'||rId||'"/>');
-        end loop;
-        stream_write(stream, '</tableParts>');
-      end if; 
-
-      stream_write(stream, '</worksheet>');
-      stream_flush(stream);
-      
-      -- set shared formula ranges
-      si := sd.sharedFmlaMap.first;
-      while si is not null loop
-        t := sd.tableList(sd.sharedFmlaMap(si).tableId);
-        stream.content := replace(stream.content
-                                , '###'||to_char(si)||'###'
-                                , makeRangeImpl(t.sqlMetadata.visibleColumnSet(sd.sharedFmlaMap(si).columnId)
-                                          , t.range.start_ref.r + case when t.header.show then 1 else 0 end
-                                          , t.sqlMetadata.visibleColumnSet(sd.sharedFmlaMap(si).columnId)
-                                          , t.range.end_ref.r).expr);
-        si := sd.sharedFmlaMap.next(si);
-      end loop;
-      
-      part.content := stream.content;
-        
-      -- add sheet to workbook
-      ctx.workbook.sheets(sheet.sheetId) := sheet;
-      ctx.workbook.sheetMap(upper(sheet.name)) := sheet.sheetId;
-        
-      -- add sheet part to package
-      addPart(ctx, part);
-    
-    else
-      dbms_lob.freetemporary(stream.content);
     end if;
+      
+    -- merged cells
+    if sd.mergedCells.count != 0 then
+      stream_write(stream, '<mergeCells count="'||to_char(sd.mergedCells.count)||'">');
+      for i in 1 .. sd.mergedCells.count loop
+        cellSpan := sd.mergedCells(i);
+        setAnchorRowOffset(sd, cellSpan.anchorRef);
+        setAnchorColOffset(sd, cellSpan.anchorRef);
+        stream_write(stream, '<mergeCell ref="'||makeRangeImpl(cellSpan).expr||'"/>');
+      end loop;
+      stream_write(stream, '</mergeCells>');
+    end if;
+      
+    -- new sheet
+    ctx.workbook.sheets.extend;
+    sheet.sheetId := ctx.workbook.sheets.last;
 
+    -- check name validity
+    if translate(sheet.name, '_\/*?:[]', '_') != sheet.name 
+       or substr(sheet.name, 1, 1) = '''' 
+       or substr(sheet.name, -1) = ''''
+       or length(sheet.name) > 31 
+    then
+      error('Invalid sheet name: %s', sheet.name);
+    end if;
+        
+    -- check name uniqueness (case-insensitive)
+    if ctx.workbook.sheetMap.exists(upper(sheet.name)) then
+      error('Duplicate sheet name: %s', sheet.name);
+    end if;
+      
+    sheet.state := sd.state;
+    -- save idx of the first visible sheet
+    if ctx.workbook.firstSheet is null and sheet.state = ST_VISIBLE then
+      ctx.workbook.firstSheet := sheet.sheetId;
+    end if;
+        
+    sheet.partName := 'xl/worksheets/sheet'||to_char(sheet.sheetId)||'.xml';
+
+    -- new sheet part
+    part.name := sheet.partName;
+    part.contentType := MT_WORKSHEET;
+    part.rels := CT_Relationships();
+      
+    -- conditional formatting
+    for i in 1 .. cfRules.count loop
+      writeCondFmtRule(stream, cfRules(i), i);
+    end loop;
+      
+    -- data validations
+    if dvRules.count != 0 then
+      stream_write(stream, '<dataValidations count="'||to_char(dvRules.count)||'">');
+      for i in 1 .. dvRules.count loop
+        writeDataValidationRule(stream, dvRules(i));
+      end loop;
+      stream_write(stream, '</dataValidations>');
+    end if;
+      
+    -- table parts
+    if sheet.tableParts.count != 0 then
+      stream_write(stream, '<tableParts count="'||to_char(sheet.tableParts.count)||'">');
+      for i in 1 .. sheet.tableParts.count loop
+        rId := addRelationship(part, RS_TABLE, ctx.workbook.tables(sheet.tableParts(i)).partName);
+        stream_write(stream, '<tablePart r:id="'||rId||'"/>');
+      end loop;
+      stream_write(stream, '</tableParts>');
+    end if; 
+
+    stream_write(stream, '</worksheet>');
+    stream_flush(stream);
+      
+    -- set shared formula ranges
+    si := sd.sharedFmlaMap.first;
+    while si is not null loop
+      t := sd.tableList(sd.sharedFmlaMap(si).tableId);
+      stream.content := replace(stream.content
+                              , '###'||to_char(si)||'###'
+                              , makeRangeImpl(t.sqlMetadata.visibleColumnSet(sd.sharedFmlaMap(si).columnId)
+                                        , t.range.start_ref.r + case when t.header.show then 1 else 0 end
+                                        , t.sqlMetadata.visibleColumnSet(sd.sharedFmlaMap(si).columnId)
+                                        , t.range.end_ref.r).expr);
+      si := sd.sharedFmlaMap.next(si);
+    end loop;
+      
+    part.content := stream.content;
+        
+    -- add sheet to workbook
+    ctx.workbook.sheets(sheet.sheetId) := sheet;
+    ctx.workbook.sheetMap(upper(sheet.name)) := sheet.sheetId;
+        
+    -- add sheet part to package
+    addPart(ctx, part);
+    
+  exception
+    when emptyPartition then
+      null;
   end;
 
   procedure createWorksheetBinImpl (
@@ -4616,13 +4633,12 @@ create or replace package body ExcelGen is
   , sd   in out nocopy sheet_definition_t
   )
   is
+    stream          xutl_xlsb.Stream_T;
     dataMap         data_map_t;
     t               table_t;
     nrows           integer;
     rowIdx          integer := t.anchorRef.rowOffset - 1;
     colIdx          pls_integer;
-    stream          xutl_xlsb.Stream_T;
-    
     columnId        pls_integer;
     r               row_t;
     cell            cell_t;
@@ -4637,11 +4653,15 @@ create or replace package body ExcelGen is
     
     partitionStart  pls_integer;
     partitionStop   pls_integer;
-    isSheetEmpty    boolean := true;
+    
+    hasRange        boolean;
     headerXfId      pls_integer;
+    
+    emptyPartition  exception;
     
   begin
     
+    sheet.name := sd.sheetName;
     sheet.tableParts := CT_TableParts();
     
     stream := xutl_xlsb.new_stream();
@@ -4690,8 +4710,9 @@ create or replace package body ExcelGen is
       xutl_xlsb.put_simple_record(stream, 391);  -- BrtEndColInfos
     end if;
       
+    -- BEGIN sheetData
     xutl_xlsb.put_simple_record(stream, 145);  -- BrtBeginSheetData
-
+    
     for tId in 1 .. sd.tableList.count loop
       
       t := sd.tableList(tId);
@@ -4758,7 +4779,30 @@ create or replace package body ExcelGen is
       partitionStart := t.sqlMetadata.r_num + nrows;
       partitionStop := partitionStart + t.sqlMetadata.partitionSize - 1;
       
-      isSheetEmpty := t.isEmpty and t.sqlMetadata.partitionId != 0;
+      if sd.pageable then
+        -- discard empty non-first partition
+        if t.isEmpty and t.sqlMetadata.partitionId != 0 then
+          closeCursor(t.sqlMetadata);
+          sd.done := true;
+          dbms_lob.freetemporary(stream.content);
+          raise emptyPartition;
+        end if;
+              
+        -- compute pageable sheet name here so that it can be passed to formula context
+        if t.sqlMetadata.partitionBySize then
+          t.sqlMetadata.partitionId := t.sqlMetadata.partitionId + 1;
+          -- t is local, don't forget to write it back to sheet def
+          sd.tableList(t.id).sqlMetadata.partitionId := t.sqlMetadata.partitionId;
+          sheet.name := replace(sheet.name, '${PNUM}', to_char(t.sqlMetadata.partitionId));
+          sheet.name := replace(sheet.name, '${PSTART}', to_char(partitionStart));
+          sheet.name := replace(sheet.name, '${PSTOP}', to_char(t.sqlMetadata.r_num));
+        end if;
+          
+        debug('Expanded sheet name='||sheet.name);
+      
+        ExcelFmla.putSheet(sheet.name);
+        ExcelFmla.setCurrentSheet(sheet.name);
+      end if;
       
       -- data rows
       while nrows != 0 loop
@@ -4782,7 +4826,6 @@ create or replace package body ExcelGen is
             cell.v := dataMap(i);
             cell.cn := t.sqlMetadata.columnList(i).colNum;
             cell.c := t.sqlMetadata.columnList(i).colRef;
-            
             cell.xfId := t.sqlMetadata.columnList(i).xfId;
 
             -- if original SQL type is ANYDATA, and actual value is numeric or datetime, apply default format
@@ -4811,8 +4854,6 @@ create or replace package body ExcelGen is
                 else
                   cell.f.hasRef := false;
                 end if;
-              --else
-              --  cell.f := null;
               end if;
             end if;
             
@@ -4850,49 +4891,39 @@ create or replace package body ExcelGen is
       debug(utl_lms.format_message('end fetch: sheetId=%d tableId=%d rowCount=%d', sd.sheetIndex, tId, t.sqlMetadata.r_num));
 
       if nrows = 0 then
-        debug('close cursor');
-        dbms_sql.close_cursor(t.sqlMetadata.cursorNumber);
+        closeCursor(t.sqlMetadata);
         sd.done := true;
       end if;
+      
+      hasRange := t.header.show or not t.isEmpty or ( t.isEmpty and t.formatAsTable );
 
-      t.range := makeRangeImpl(t.sqlMetadata.columnList(t.sqlMetadata.visibleColumnSet.first).colRef
-                         , t.anchorRef.rowOffset
-                         , t.sqlMetadata.columnList(t.sqlMetadata.visibleColumnSet.last).colRef
-                         , cell.r);
+      if hasRange then
+        t.range := makeRangeImpl(
+                     t.sqlMetadata.columnList(t.sqlMetadata.visibleColumnSet.first).colRef
+                   , t.anchorRef.rowOffset
+                   , t.sqlMetadata.columnList(t.sqlMetadata.visibleColumnSet.last).colRef
+                   -- if the table is declared over an empty dataset, extends its range by one row down to make it legal in Excel
+                   , cell.r + case when t.formatAsTable and t.isEmpty then 1 else 0 end
+                   );
+      end if;
 
-      if t.formatAsTable and not isSheetEmpty then
-        tableId := addTableLayout(ctx, t.range, t.header.show, t.header.autoFilter, t.tableStyle, t.columnMap, t.tableName, t.isEmpty
+      if t.formatAsTable then
+        tableId := addTableLayout(ctx, t.range, t.header.show, t.header.autoFilter, t.tableStyle, t.columnMap, t.tableName
                                  , t.showFirstColumn, t.showLastColumn, t.showRowStripes, t.showColumnStripes);
         sheet.tableParts.extend;
         sheet.tableParts(sheet.tableParts.last) := tableId;
       end if;
-
+      
       -- column-level data validation and conditional formatting
-      columnId := t.columnMap.first;
-      while columnId is not null loop
+      if not t.isEmpty then
         
-        -- column data validation
-        if t.columnMap(columnId).dvRule.type is not null then
-          setSqref(
-            sqref     => t.columnMap(columnId).dvRule.sqref
-          , cellRange => ExcelTypes.ST_Sqref(
-                           makeRangeImpl(
-                             t.sqlMetadata.visibleColumnSet(columnId)
-                           , t.range.start_ref.r + case when t.header.show then 1 else 0 end
-                           , t.sqlMetadata.visibleColumnSet(columnId)
-                           , t.range.end_ref.r
-                           ).expr
-                         )
-          );
-          sd.dvRules.extend;
-          sd.dvRules(sd.dvRules.last) := t.columnMap(columnId).dvRule;
-        end if;
-        
-        -- column conditional formatting
-        if t.columnMap(columnId).cfRules is not null and t.columnMap(columnId).cfRules.count != 0 then
-          for i in 1 .. t.columnMap(columnId).cfRules.count loop     
+        columnId := t.columnMap.first;
+        while columnId is not null loop
+            
+          -- column data validation
+          if t.columnMap(columnId).dvRule.type is not null then
             setSqref(
-              sqref     => t.columnMap(columnId).cfRules(i).sqref
+              sqref     => t.columnMap(columnId).dvRule.sqref
             , cellRange => ExcelTypes.ST_Sqref(
                              makeRangeImpl(
                                t.sqlMetadata.visibleColumnSet(columnId)
@@ -4902,31 +4933,51 @@ create or replace package body ExcelGen is
                              ).expr
                            )
             );
+            sd.dvRules.extend;
+            sd.dvRules(sd.dvRules.last) := t.columnMap(columnId).dvRule;
+          end if;
+            
+          -- column conditional formatting
+          if t.columnMap(columnId).cfRules is not null and t.columnMap(columnId).cfRules.count != 0 then
+            for i in 1 .. t.columnMap(columnId).cfRules.count loop     
+              setSqref(
+                sqref     => t.columnMap(columnId).cfRules(i).sqref
+              , cellRange => ExcelTypes.ST_Sqref(
+                               makeRangeImpl(
+                                 t.sqlMetadata.visibleColumnSet(columnId)
+                               , t.range.start_ref.r + case when t.header.show then 1 else 0 end
+                               , t.sqlMetadata.visibleColumnSet(columnId)
+                               , t.range.end_ref.r
+                               ).expr
+                             )
+              );
+              sd.cfRules.extend;
+              sd.cfRules(sd.cfRules.last) := t.columnMap(columnId).cfRules(i);
+            end loop;
+          end if;
+            
+          columnId := t.columnMap.next(columnId);
+        end loop;
+          
+        -- table-level conditional formatting
+        if t.cfRules is not null and t.cfRules.count != 0 then
+          for i in 1 .. t.cfRules.count loop
+            setSqref(
+              sqref     => t.cfRules(i).sqref
+            , cellRange => ExcelTypes.ST_Sqref(
+                             makeRangeImpl(
+                               t.range.start_ref.c
+                             , t.range.start_ref.r + case when t.header.show then 1 else 0 end
+                             , t.range.end_ref.c
+                             , t.range.end_ref.r
+                             ).expr
+                           )
+            );
             sd.cfRules.extend;
-            sd.cfRules(sd.cfRules.last) := t.columnMap(columnId).cfRules(i);
+            sd.cfRules(sd.cfRules.last) := t.cfRules(i);        
           end loop;
         end if;
-        
-        columnId := t.columnMap.next(columnId);
-      end loop;
       
-      -- table-level conditional formatting
-      if t.cfRules is not null and t.cfRules.count != 0 then
-        for i in 1 .. t.cfRules.count loop
-          setSqref(
-            sqref     => t.cfRules(i).sqref
-          , cellRange => ExcelTypes.ST_Sqref(
-                           makeRangeImpl(
-                             t.range.start_ref.c
-                           , t.range.start_ref.r + case when t.header.show then 1 else 0 end
-                           , t.range.end_ref.c
-                           , t.range.end_ref.r
-                           ).expr
-                         )
-          );
-          sd.cfRules.extend;
-          sd.cfRules(sd.cfRules.last) := t.cfRules(i);        
-        end loop;
       end if;
       
       sd.tableList(tId) := t;
@@ -5009,162 +5060,144 @@ create or replace package body ExcelGen is
       end loop;
       
       sd.done := true;
-      isSheetEmpty := false;
       
     end if;
       
     xutl_xlsb.put_simple_record(stream, 146);  -- BrtEndSheetData
-
-    -- force empty sheet if no tables or cells declared
-    if sd.tableList.count = 0 and sd.floatingCells.count = 0 then
-      isSheetEmpty := false;
+    -- END sheetData
+    
+    if sd.tableList.count = 0 then
       sd.done := true;
     end if;
-    
-    if not isSheetEmpty then
-    
-      -- if there's only one table, set sheet-level autoFilter accordingly
-      if t.header.show and t.header.autoFilter then
-        if not t.formatAsTable then
-
-          putNameImpl(
-            ctxId   => currentCtxId
-          , name    => '_FilterDatabase'
-          , value   => '''' || sd.sheetName || '''!' || getRangeExpr(t.range, true)
-          , sheetId => sd.sheetIndex
-          , hidden  => true
-          , builtIn => true
-          );
+        
+    -- if there's only one table, set sheet-level autoFilter accordingly
+    if sd.tableList.count = 1 and t.header.show and t.header.autoFilter then
+      if not t.formatAsTable then
           
-          -- TODO: do this in putNameImpl if hidden = true
-          ExcelFmla.putName('_FilterDatabase', sd.sheetName);
-
-          --sheet.filterRange := t.range;
-          --ctx.workbook.hasDefinedNames := true;
-          xutl_xlsb.put_BeginAFilter(
-            stream
-          , firstRow    => t.range.start_ref.r - 1
-          , firstCol    => t.range.start_ref.cn - 1
-          , lastRow     => t.range.end_ref.r - 1
-          , lastCol     => t.range.end_ref.cn - 1
-          );
-          xutl_xlsb.put_simple_record(stream, 162);  -- BrtEndAFilter
-        end if;
-      end if;
-
-      -- merged cells
-      if sd.mergedCells.count != 0 then
-        xutl_xlsb.put_simple_record(stream, 177, int2raw(sd.mergedCells.count)); -- BrtBeginMergeCells
-        for i in 1 .. sd.mergedCells.count loop
-          cellSpan := sd.mergedCells(i);
-          setAnchorRowOffset(sd, cellSpan.anchorRef);
-          setAnchorColOffset(sd, cellSpan.anchorRef);
-          xutl_xlsb.put_MergeCell(
-            stream
-          , rwFirst  => cellSpan.anchorRef.rowOffset - 1
-          , rwLast   => ( cellSpan.anchorRef.rowOffset + cellSpan.rowSpan - 1 ) - 1
-          , colFirst => cellSpan.anchorRef.colOffset - 1
-          , colLast  => ( cellSpan.anchorRef.colOffset + cellSpan.colSpan - 1 ) - 1
-          );
-        end loop;
-        xutl_xlsb.put_simple_record(stream, 178); -- BrtEndMergeCells
-      end if;
-           
-      -- new sheet
-      ctx.workbook.sheets.extend;
-      sheet.sheetId := ctx.workbook.sheets.last;
-      sheet.name := sd.sheetName;
-      if t.sqlMetadata.partitionBySize then
-        t.sqlMetadata.partitionId := t.sqlMetadata.partitionId + 1;
-        -- t is local, don't forget to write it back to sheet def
-        sd.tableList(t.id).sqlMetadata.partitionId := t.sqlMetadata.partitionId;
-        sheet.name := replace(sheet.name, '${PNUM}', to_char(t.sqlMetadata.partitionId));
-        sheet.name := replace(sheet.name, '${PSTART}', to_char(partitionStart));
-        sheet.name := replace(sheet.name, '${PSTOP}', to_char(t.sqlMetadata.r_num));
-      end if;
-        
-      -- check name validity
-      if translate(sheet.name, '_\/*?:[]', '_') != sheet.name 
-         or substr(sheet.name, 1, 1) = '''' 
-         or substr(sheet.name, -1) = ''''
-         or length(sheet.name) > 31 
-      then
-        error('Invalid sheet name: %s', sheet.name);
-      end if;
-        
-      -- check name uniqueness (case-insensitive)
-      if ctx.workbook.sheetMap.exists(upper(sheet.name)) then
-        error('Duplicate sheet name: %s', sheet.name);
-      end if;
-
-      sheet.state := sd.state;
-      -- save idx of the first visible sheet
-      if ctx.workbook.firstSheet is null and sheet.state = ST_VISIBLE then
-        ctx.workbook.firstSheet := sheet.sheetId;
-      end if;
-        
-      sheet.partName := 'xl/worksheets/sheet'||to_char(sheet.sheetId)||'.bin';
-
-      -- new sheet part
-      part.name := sheet.partName;
-      part.contentType := MT_WORKSHEET_BIN;
-      part.rels := CT_Relationships();
-
-      -- conditional formatting
-      if sd.cfRules.count != 0 then
-        xutl_xlsb.put_CondFmts(stream, sd.cfRules);
-      end if;
-      
-      -- data validations
-      if sd.dvRules.count != 0 then
-        xutl_xlsb.put_DVals(stream, sd.dvRules);
-      end if;
-      
-      -- table parts
-      if sheet.tableParts.count != 0 then
-        xutl_xlsb.put_simple_record(stream, 660, int2raw(sheet.tableParts.count)); -- BrtBeginListParts
-        for i in 1 .. sheet.tableParts.count loop
-          rId := addRelationship(part, RS_TABLE, ctx.workbook.tables(sheet.tableParts(i)).partName);
-          xutl_xlsb.put_ListPart(stream, rId);  -- BrtListPart
-        end loop;
-        xutl_xlsb.put_simple_record(stream, 662);  -- BrtEndListParts
-      end if;
-        
-      xutl_xlsb.put_simple_record(stream, 130);  -- BrtEndSheet
-      xutl_xlsb.flush_stream(stream);
-
-      -- set shared formula ranges      
-      si := sd.sharedFmlaMap.first;
-      while si is not null loop
-        t := sd.tableList(sd.sharedFmlaMap(si).tableId);
-        
-        xutl_xlsb.put_ShrFmlaRfX(
-          stream   => stream
-        , si       => si
-        , firstRow => t.range.start_ref.r + case when t.header.show then 1 else 0 end - 1
-        , firstCol => t.sqlMetadata.columnList(sd.sharedFmlaMap(si).columnId).colNum - 1
-        , lastRow  => t.range.end_ref.r - 1
-        , lastCol  => t.sqlMetadata.columnList(sd.sharedFmlaMap(si).columnId).colNum - 1
+        putNameImpl(
+          ctxId     => currentCtxId
+        , name      => '_FilterDatabase'
+        , value     => '''' || sheet.name || '''!' || getRangeExpr(t.range, true)
+        , sheetName => sheet.name
+        , hidden    => true
+        , builtIn   => true
         );
-        
-        si := sd.sharedFmlaMap.next(si);
-      end loop;
-      
 
-      part.contentBin := stream.content;
-      part.isBinary := true;
+        xutl_xlsb.put_BeginAFilter(
+          stream
+        , firstRow    => t.range.start_ref.r - 1
+        , firstCol    => t.range.start_ref.cn - 1
+        , lastRow     => t.range.end_ref.r - 1
+        , lastCol     => t.range.end_ref.cn - 1
+        );
+        xutl_xlsb.put_simple_record(stream, 162);  -- BrtEndAFilter
         
-      -- add sheet to workbook
-      ctx.workbook.sheets(sheet.sheetId) := sheet;
-      ctx.workbook.sheetMap(upper(sheet.name)) := sheet.sheetId;
-        
-      -- add sheet part to package
-      addPart(ctx, part);
-
-    else
-      dbms_lob.freetemporary(stream.content);
+      end if;
     end if;
 
+    -- merged cells
+    if sd.mergedCells.count != 0 then
+      xutl_xlsb.put_simple_record(stream, 177, int2raw(sd.mergedCells.count)); -- BrtBeginMergeCells
+      for i in 1 .. sd.mergedCells.count loop
+        cellSpan := sd.mergedCells(i);
+        setAnchorRowOffset(sd, cellSpan.anchorRef);
+        setAnchorColOffset(sd, cellSpan.anchorRef);
+        xutl_xlsb.put_MergeCell(
+          stream
+        , rwFirst  => cellSpan.anchorRef.rowOffset - 1
+        , rwLast   => ( cellSpan.anchorRef.rowOffset + cellSpan.rowSpan - 1 ) - 1
+        , colFirst => cellSpan.anchorRef.colOffset - 1
+        , colLast  => ( cellSpan.anchorRef.colOffset + cellSpan.colSpan - 1 ) - 1
+        );
+      end loop;
+      xutl_xlsb.put_simple_record(stream, 178); -- BrtEndMergeCells
+    end if;
+           
+    -- new sheet
+    ctx.workbook.sheets.extend;
+    sheet.sheetId := ctx.workbook.sheets.last;
+
+    -- check name validity
+    if translate(sheet.name, '_\/*?:[]', '_') != sheet.name 
+       or substr(sheet.name, 1, 1) = '''' 
+       or substr(sheet.name, -1) = ''''
+       or length(sheet.name) > 31 
+    then
+      error('Invalid sheet name: %s', sheet.name);
+    end if;
+          
+    -- check name uniqueness (case-insensitive)
+    if ctx.workbook.sheetMap.exists(upper(sheet.name)) then
+      error('Duplicate sheet name: %s', sheet.name);
+    end if;
+
+    sheet.state := sd.state;
+    -- save idx of the first visible sheet
+    if ctx.workbook.firstSheet is null and sheet.state = ST_VISIBLE then
+      ctx.workbook.firstSheet := sheet.sheetId;
+    end if;
+        
+    sheet.partName := 'xl/worksheets/sheet'||to_char(sheet.sheetId)||'.bin';
+
+    -- new sheet part
+    part.name := sheet.partName;
+    part.contentType := MT_WORKSHEET_BIN;
+    part.rels := CT_Relationships();
+
+    -- conditional formatting
+    if sd.cfRules.count != 0 then
+      xutl_xlsb.put_CondFmts(stream, sd.cfRules);
+    end if;
+      
+    -- data validations
+    if sd.dvRules.count != 0 then
+      xutl_xlsb.put_DVals(stream, sd.dvRules);
+    end if;
+      
+    -- table parts
+    if sheet.tableParts.count != 0 then
+      xutl_xlsb.put_simple_record(stream, 660, int2raw(sheet.tableParts.count)); -- BrtBeginListParts
+      for i in 1 .. sheet.tableParts.count loop
+        rId := addRelationship(part, RS_TABLE, ctx.workbook.tables(sheet.tableParts(i)).partName);
+        xutl_xlsb.put_ListPart(stream, rId);  -- BrtListPart
+      end loop;
+      xutl_xlsb.put_simple_record(stream, 662);  -- BrtEndListParts
+    end if;
+        
+    xutl_xlsb.put_simple_record(stream, 130);  -- BrtEndSheet
+    xutl_xlsb.flush_stream(stream);
+
+    -- set shared formula ranges      
+    si := sd.sharedFmlaMap.first;
+    while si is not null loop
+      t := sd.tableList(sd.sharedFmlaMap(si).tableId);
+        
+      xutl_xlsb.put_ShrFmlaRfX(
+        stream   => stream
+      , si       => si
+      , firstRow => t.range.start_ref.r + case when t.header.show then 1 else 0 end - 1
+      , firstCol => t.sqlMetadata.columnList(sd.sharedFmlaMap(si).columnId).colNum - 1
+      , lastRow  => t.range.end_ref.r - 1
+      , lastCol  => t.sqlMetadata.columnList(sd.sharedFmlaMap(si).columnId).colNum - 1
+      );
+        
+      si := sd.sharedFmlaMap.next(si);
+    end loop;
+      
+
+    part.contentBin := stream.content;
+    part.isBinary := true;
+        
+    -- add sheet to workbook
+    ctx.workbook.sheets(sheet.sheetId) := sheet;
+    ctx.workbook.sheetMap(upper(sheet.name)) := sheet.sheetId;
+        
+    -- add sheet part to package
+    addPart(ctx, part);
+    
+  exception
+    when emptyPartition then
+      null;      
   end;
   
   procedure prepareTable (
@@ -5246,15 +5279,15 @@ create or replace package body ExcelGen is
   end;
 
   procedure createWorksheet (
-    ctx         in out nocopy context_t
-  , sheetIndex  in pls_integer
+    ctx  in out nocopy context_t
+  , sh   in sheetHandle
   )
   is
     sd   sheet_definition_t;
     idx  pls_integer;
   begin
     
-    sd := ctx.sheetDefinitionMap(sheetIndex);
+    sd := ctx.sheetDefinitionMap(sh);
     -- apply global style to sheet
     sd.defaultXfId := mergeCellStyle(ctx, ctx.defaultXfId, sd.defaultXfId);
     
@@ -5283,9 +5316,6 @@ create or replace package body ExcelGen is
       prepareTable(ctx, sd, sd.tableForest.roots(i));
     end loop;
     
-    -- hyperlinks
-    --prepareHyperlinks(sd);
-    
     sd.streamable := ( sd.tableList.count = 1 
                    and sd.data.rows.count = 0 
                    and sd.floatingCells.count = 0
@@ -5297,9 +5327,14 @@ create or replace package body ExcelGen is
       error('Cannot paginate data in a multitable or mixed-content worksheet');
     end if;
     
-    -- temporary fix: do not set the current sheet name in formula context when pagination is enabled
+    -- do not set the current sheet name in formula context when pagination is enabled
     if not sd.pageable then
       ExcelFmla.setCurrentSheet(sd.sheetName);
+    end if;
+    
+    -- for a pageable sheet, append a default partition number placeholder to the sheet name if none found
+    if sd.pageable and not regexp_like(sd.sheetName, '\$\{P(NUM|START|STOP)\}') then
+      sd.sheetName := sd.sheetName || '_${PNUM}';
     end if;
     
     while not sd.done loop
@@ -5311,7 +5346,7 @@ create or replace package body ExcelGen is
       end case;
     end loop;
     
-    ctx.sheetDefinitionMap(sheetIndex) := sd;
+    ctx.sheetDefinitionMap(sh) := sd;
 
   end;
   
@@ -5527,6 +5562,7 @@ create or replace package body ExcelGen is
     
     xutl_xlsb.put_simple_record(stream, 144); -- BrtEndBundleShs
       
+    ctx.names := ExcelFmla.getNames(); -- sync names from formula context
     xutl_xlsb.put_Names(stream, ctx.names);
     
     xutl_xlsb.put_CalcProp(stream, 999999, ctx.workbook.refStyle); -- BrtCalcProp
@@ -6134,15 +6170,25 @@ create or replace package body ExcelGen is
     t := currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId);
     
     vc.col.name := p_name;
-    vc.col.type := dbms_sql.VARCHAR2_TYPE;
-    vc.col.supertype := ST_FORMULA;
-    vc.col.fmla.expr := p_value;
-    vc.col.fmla.shared := true;
-    vc.col.fmla.refStyle := p_refStyle;
-    vc.col.hyperlink := nvl(p_hyperlink, false);
+    vc.col.virtual := true;
     
-    vc.col.fmla.sharedIdx := currentCtx.sheetDefinitionMap(p_sheetId).sharedFmlaSeq;
-    currentCtx.sheetDefinitionMap(p_sheetId).sharedFmlaSeq := vc.col.fmla.sharedIdx + 1;
+    if p_value is not null then
+    
+      vc.col.type := dbms_sql.VARCHAR2_TYPE;
+      vc.col.supertype := ST_FORMULA;
+      vc.col.fmla.expr := p_value;
+      vc.col.fmla.shared := true;
+      vc.col.fmla.refStyle := p_refStyle;
+      vc.col.hyperlink := nvl(p_hyperlink, false);
+      
+      vc.col.fmla.sharedIdx := currentCtx.sheetDefinitionMap(p_sheetId).sharedFmlaSeq;
+      currentCtx.sheetDefinitionMap(p_sheetId).sharedFmlaSeq := vc.col.fmla.sharedIdx + 1;
+    
+    else
+      -- defaults to a formula-less number column
+      vc.col.type := dbms_sql.NUMBER_TYPE;
+      vc.col.supertype := ST_NUMBER;
+    end if;
     
     vc.pos := p_columnId;
     vc.after := p_after;
@@ -6275,7 +6321,16 @@ create or replace package body ExcelGen is
   )
   is
   begin
-    putNameImpl(p_ctxId, p_name, p_value, p_scope, p_cellRef, p_comment, refStyle => p_refStyle);
+    loadContext(p_ctxId);
+    putNameImpl(
+      ctxId     => p_ctxId
+    , name      => p_name
+    , value     => p_value
+    , sheetName => case when p_scope is not null then currentCtx.sheetDefinitionMap(p_scope).sheetName end
+    , cellRef   => p_cellRef
+    , comment   => p_comment
+    , refStyle  => p_refStyle
+    );
   end;
 
   procedure addDataValidationRule (
@@ -7455,7 +7510,7 @@ $end
   )
   return blob
   is
-    shHandle   sheetHandle;
+    sh        sheetHandle;
     shHandles  intList_t := intList_t();
     sheet      ExcelTypes.CT_SheetBase;
     sheets     ExcelTypes.CT_Sheets := ExcelTypes.CT_Sheets();
@@ -7469,23 +7524,25 @@ $end
     -- the following loop:
     -- builds a collection of sheet handles
     -- builds a collection of (sheetName, sheetIdx) tuples to be passed to the formula context
-    shHandle := currentCtx.sheetDefinitionMap.first;
-    while shHandle is not null loop
+    sh := currentCtx.sheetDefinitionMap.first;
+    while sh is not null loop
       -- list of sheet handles
       shHandles.extend;
       sheet.idx := shHandles.last;
-      shHandles(sheet.idx) := shHandle;
-      -- get sheet definition
-      --sd := currentCtx.sheetDefinitionMap(shHandle);
+      shHandles(sheet.idx) := sh;
       
-      if not currentCtx.sheetDefinitionMap(shHandle).pageable then
-        sheet.name := currentCtx.sheetDefinitionMap(shHandle).sheetName;
+      if not currentCtx.sheetDefinitionMap(sh).pageable then
+        sheet.name := currentCtx.sheetDefinitionMap(sh).sheetName;
         sheets.extend;
         sheets(sheets.last) := sheet;
+        
+        -- update sheet definition and index map with new densified index
+        --currentCtx.sheetDefinitionMap(sh).sheetIndex := sheet.idx;
+        --currentCtx.sheetIndexMap(upper(sheet.name)) := sheet.idx;
+        
       end if;
       
-      
-      shHandle := currentCtx.sheetDefinitionMap.next(shHandle);
+      sh := currentCtx.sheetDefinitionMap.next(sh);
     end loop;
     
     -- formula context

@@ -1,5 +1,11 @@
 # Change Log
 
+## [4.3.1] - 2025-01-31
+
+### Fixed
+
+* Issue #69 (Invalid sheet name after call setheader)
+
 ## [4.3.0] - 2025-01-07
 
 ### Added
