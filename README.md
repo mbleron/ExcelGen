@@ -313,6 +313,8 @@ For example :
 `sheet${PNUM}` will be expanded to `sheet1`, `sheet2`, `sheet3`, etc.  
 `${PSTART}-${PSTOP}` will be expanded to `1-1000`, `1001-2000`, `2001-3000`, etc. assuming a page size of 1000 rows.  
 
+At least one partition variable is mandatory in the name of a pageable sheet to avoid a 'duplicate sheet' exception if more than one partition is generated. Therefore, in case a variable would still be inadvertently missing, ExcelGen will add a default `_${PNUM}` suffix to the sheet name.
+
 Table positioning may be absolute in the owning sheet, or relative to another table.  
 For the former method, row and column offsets correspond to row and column (1-based) indices respectively, and for the latter, offsets are 0-based from one the four anchor table corners:  
 
