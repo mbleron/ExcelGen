@@ -61,6 +61,7 @@ create or replace package ExcelGen is
     Marc Bleron       2024-07-21     Added hyperlink, excluded columns, table naming
     Marc Bleron       2024-08-14     Added makeCellRange, data validation
     Marc Bleron       2024-09-06     Conditional formatting
+    Marc Bleron       2025-02-08     Image support
 ====================================================================================== */
 
   -- file types
@@ -518,6 +519,16 @@ create or replace package ExcelGen is
   , p_location        in varchar2
   , p_linkName        in varchar2 default null
   , p_style           in cellStyleHandle default null 
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  );
+
+  procedure putImageCell (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowIdx          in pls_integer
+  , p_colIdx          in pls_integer
+  , p_image           in blob
   , p_anchorTableId   in tableHandle default null
   , p_anchorPosition  in pls_integer default null
   );

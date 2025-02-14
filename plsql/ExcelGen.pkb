@@ -66,33 +66,49 @@ create or replace package body ExcelGen is
                                      Fixed insertFirst/Last calls
     Marc Bleron       2025-01-31     Fixed corrupted sheet references in formulas after a pageable sheet
                                      More fixes related to pageable sheets and virtual columns
+    Marc Bleron       2025-02-08     Image support
 ====================================================================================== */
 
-  VERSION_NUMBER     constant varchar2(16) := '4.3.1';
+  VERSION_NUMBER     constant varchar2(16) := '4.4.0';
 
   -- OPC part MIME types
-  MT_STYLES          constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml';
-  MT_WORKBOOK        constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml';
-  MT_WORKSHEET       constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml';
-  MT_SHAREDSTRINGS   constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml';
-  MT_TABLE           constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml';
   --MT_COMMENTS        constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml';
-  MT_CORE            constant varchar2(256) := 'application/vnd.openxmlformats-package.core-properties+xml';
+  MT_STYLES                constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml';
+  MT_WORKBOOK              constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml';
+  MT_WORKSHEET             constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml';
+  MT_SHAREDSTRINGS         constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml';
+  MT_TABLE                 constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml';
+  
+  MT_CORE                  constant varchar2(256) := 'application/vnd.openxmlformats-package.core-properties+xml';
+  MT_METADATA              constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml';
+  MT_RDRICHVALUESTRUCTURE  constant varchar2(256) := 'application/vnd.ms-excel.rdrichvaluestructure+xml';
+  MT_RICHVALUEREL          constant varchar2(256) := 'application/vnd.ms-excel.richvaluerel+xml';
+  MT_RDRICHVALUE           constant varchar2(256) := 'application/vnd.ms-excel.rdrichvalue+xml';
+  
+  MT_PNG                   constant varchar2(256) := 'image/png';
+  MT_JPEG                  constant varchar2(256) := 'image/jpeg';
+  MT_GIF                   constant varchar2(256) := 'image/gif';
   
   -- Binary MIME types
-  MT_STYLES_BIN         constant varchar2(256) := 'application/vnd.ms-excel.styles';
-  MT_WORKSHEET_BIN      constant varchar2(256) := 'application/vnd.ms-excel.worksheet';
-  MT_SHAREDSTRINGS_BIN  constant varchar2(256) := 'application/vnd.ms-excel.sharedStrings';
-  MT_TABLE_BIN          constant varchar2(256) := 'application/vnd.ms-excel.table';
+  MT_STYLES_BIN            constant varchar2(256) := 'application/vnd.ms-excel.styles';
+  MT_WORKSHEET_BIN         constant varchar2(256) := 'application/vnd.ms-excel.worksheet';
+  MT_SHAREDSTRINGS_BIN     constant varchar2(256) := 'application/vnd.ms-excel.sharedStrings';
+  MT_TABLE_BIN             constant varchar2(256) := 'application/vnd.ms-excel.table';
+  MT_METADATA_BIN          constant varchar2(256) := 'application/vnd.ms-excel.sheetMetadata';
   
   -- Relationship types
-  RS_OFFICEDOCUMENT  constant varchar2(256) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument';
-  RS_WORKSHEET       constant varchar2(256) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet';
-  RS_STYLES          constant varchar2(256) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles';
-  RS_SHAREDSTRINGS   constant varchar2(256) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings';
-  RS_TABLE           constant varchar2(256) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/table';
   --RS_COMMENTS        constant varchar2(256) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments';
-  RS_CORE            constant varchar2(256) := 'http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties';
+  RS_OFFICEDOCUMENT        constant varchar2(256) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument';
+  RS_WORKSHEET             constant varchar2(256) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet';
+  RS_STYLES                constant varchar2(256) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles';
+  RS_SHAREDSTRINGS         constant varchar2(256) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings';
+  RS_TABLE                 constant varchar2(256) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/table';
+  RS_CORE                  constant varchar2(256) := 'http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties';
+  RS_IMAGE                 constant varchar2(256) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
+  RS_METADATA              constant varchar2(256) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata';
+  RS_RDRICHVALUESTRUCTURE  constant varchar2(256) := 'http://schemas.microsoft.com/office/2017/06/relationships/rdRichValueStructure';
+  RS_RICHVALUEREL          constant varchar2(256) := 'http://schemas.microsoft.com/office/2022/10/relationships/richValueRel';
+  RS_RDRICHVALUE           constant varchar2(256) := 'http://schemas.microsoft.com/office/2017/06/relationships/rdRichValue';
 
   RANGE_EMPTY_REF        constant varchar2(100) := 'Range error : empty reference';
   RANGE_INVALID_REF      constant varchar2(100) := 'Range error : invalid reference ''%s''';
@@ -127,6 +143,7 @@ create or replace package body ExcelGen is
   ST_VARIANT             constant pls_integer := 4;
   ST_RICHTEXT            constant pls_integer := 5;
   ST_FORMULA             constant pls_integer := 6;
+  ST_IMAGE               constant pls_integer := 7;
 
   buffer_too_small       exception;
   pragma exception_init (buffer_too_small, -19011);
@@ -152,6 +169,7 @@ create or replace package body ExcelGen is
   , clob_value      clob
   , anydata_value   anydata
   , xml_value       xmltype
+  , blob_value      blob
   );
   
   type data_map_t is table of data_t index by pls_integer;
@@ -344,7 +362,6 @@ create or replace package body ExcelGen is
   
   type CT_Sheets is table of CT_Sheet;
   type CT_SheetMap is table of pls_integer index by varchar2(128);
-  --subtype CT_SheetMap is ExcelTypes.CT_SheetMap;
   
   type CT_Workbook is record (
     sheets      CT_Sheets
@@ -353,6 +370,7 @@ create or replace package body ExcelGen is
   , tables      CT_Tables
   , firstSheet  pls_integer -- first visible sheet idx
   , refStyle    pls_integer
+  , partName    varchar2(256)
   );
   
   type bind_variable_t is record (
@@ -528,6 +546,19 @@ create or replace package body ExcelGen is
   , subject      varchar2(4000)
   , title        varchar2(4000)  
   );
+    
+  type image_t is record (
+    partName         varchar2(256)
+  , valueMetadataId  pls_integer
+  );
+  
+  type imageList_t is table of image_t;
+  
+  -- Custom hash map to hold image part names indexed by their MD5 checksums
+  -- Key size is 32 = 16 (MD5 output) * 2 bytes (hex string)
+  type imageHashMap_t is table of imageList_t index by varchar2(32);
+  
+  type defaultExtensionMap_t is table of varchar2(16) index by varchar2(256);
   
   type context_t is record (
     string_map           string_map_t
@@ -547,15 +578,20 @@ create or replace package body ExcelGen is
   , names                ExcelTypes.CT_DefinedNames
   , nameMap              ExcelTypes.CT_DefinedNameMap
   , tableNameSeq         pls_integer := 0
+  , images               imageList_t := imageList_t()
+  , imageHashMap         imageHashMap_t
+  , extensions           defaultExtensionMap_t
+  , rvStructures         ExcelTypes.CT_RichValueStructures
   );
   
   type context_cache_t is table of context_t index by pls_integer;
   
-  ctx_cache      context_cache_t;
-  currentCtx     context_t;
-  currentCtxId   pls_integer := -1;
+  ctx_cache       context_cache_t;
+  currentCtx      context_t;
+  currentCtxId    pls_integer := -1;
   
-  debug_enabled  boolean := false;
+  debug_enabled   boolean := false;
+  hash_available  boolean;
   
   function getProductName return varchar2
   is
@@ -610,10 +646,33 @@ create or replace package body ExcelGen is
     end if;
   end;
   
+  function hashMD5 (input in raw) return raw 
+  is
+    output  raw(16);
+  begin
+    $IF DBMS_DB_VERSION.VERSION >= 12  $THEN
+      select standard_hash(input, 'MD5') into output from dual;
+    $ELSE
+      execute immediate 'begin :1 := dbms_crypto.Hash(:2, dbms_crypto.HASH_MD5); end;' using out output, input;
+    $END
+    return output;
+  end;
+
+  procedure checkHashFunction is
+    dummy raw(16);
+  begin
+    dummy := hashMD5('00');
+    hash_available := true;
+  exception
+    when others then
+      debug('DBMS_CRYPTO not available');
+      hash_available := false;
+  end;
+  
   procedure init
   is  
   begin
-    null;
+    checkHashFunction;
   end;
 
   function base26decode (p_str in varchar2) 
@@ -1827,6 +1886,42 @@ create or replace package body ExcelGen is
     end if;
   end;
 
+  function putRichValueStructure (
+    rvStructures  in out nocopy ExcelTypes.CT_RichValueStructures
+  , struct        in ExcelTypes.CT_RichValueStructure
+  )
+  return pls_integer 
+  is
+    structId  pls_integer;
+  begin
+    if rvStructures.structMap.exists(struct.t) then
+      structId := rvStructures.structMap(struct.t);
+    else
+      rvStructures.structs.extend;
+      structId := rvStructures.structs.last;
+      rvStructures.structs(structId) := struct;
+      structId := structId - 1; -- transform to 0-based index
+      rvStructures.structMap(struct.t) := structId;
+    end if;
+    return structId;
+  end;
+  
+  function putLocalImageRvStruct (
+    rvStructures  in out nocopy ExcelTypes.CT_RichValueStructures
+  )
+  return pls_integer
+  is
+    struct  ExcelTypes.CT_RichValueStructure;
+  begin
+    struct.t := '_localImage';
+    struct.keys := ExcelTypes.CT_KeyList(null,null);
+    struct.keys(1).n := '_rvRel:LocalImageIdentifier';
+    struct.keys(1).t := 'i';
+    struct.keys(2).n := 'CalcOrigin';
+    struct.keys(2).t := 'i';
+    return putRichValueStructure(rvStructures, struct);
+  end;
+
   function colPxToCharWidth (
     p_px  in pls_integer
   )
@@ -2592,6 +2687,42 @@ create or replace package body ExcelGen is
     
     return f;
   end;
+  
+  function putDefaultExtension (
+    ctx          in out nocopy context_t
+  , contentType  in varchar2
+  )
+  return varchar2
+  is
+    ext  varchar2(16);
+  begin
+    if ctx.extensions.exists(contentType) then
+      ext := ctx.extensions(contentType);
+    else
+      ext := case contentType
+             when MT_PNG then 'png'
+             when MT_JPEG then 'jpeg'
+             when MT_GIF then 'gif'
+             --TODO
+             end;
+      ctx.extensions(contentType) := ext;
+    end if;
+    return ext;
+  end;
+
+  function new_part (
+    name  in varchar2
+  , contentType  in varchar2
+  )
+  return part_t
+  is
+    p  part_t;
+  begin
+    p.name := name;
+    p.contentType := contentType;
+    p.rels := CT_Relationships();
+    return p;
+  end;
 
   procedure addPart (
     ctx   in out nocopy context_t
@@ -2613,15 +2744,10 @@ create or replace package body ExcelGen is
   , content      in clob
   )
   is
-    idx  pls_integer;
+    part  part_t := new_part(name, contentType);
   begin
-    ctx.pck.parts.extend;
-    idx := ctx.pck.parts.last;
-    ctx.pck.parts(idx).name := name;
-    ctx.pck.parts(idx).contentType := contentType;
-    ctx.pck.parts(idx).content := content;
-    ctx.pck.parts(idx).rels := CT_Relationships();
-    ctx.pck.partIndices(name) := idx;
+    part.content := content;
+    addPart(ctx, part);
   end;
 
   procedure addPart (
@@ -2631,16 +2757,11 @@ create or replace package body ExcelGen is
   , contentBin   in blob
   )
   is
-    idx  pls_integer;
+    part  part_t := new_part(name, contentType);
   begin
-    ctx.pck.parts.extend;
-    idx := ctx.pck.parts.last;
-    ctx.pck.parts(idx).name := name;
-    ctx.pck.parts(idx).contentType := contentType;
-    ctx.pck.parts(idx).contentBin := contentBin;
-    ctx.pck.parts(idx).isBinary := true;
-    ctx.pck.parts(idx).rels := CT_Relationships();
-    ctx.pck.partIndices(name) := idx;
+    part.contentBin := contentBin;
+    part.isBinary := true;
+    addPart(ctx, part);
   end;
 
   function addRelationship (
@@ -2813,7 +2934,6 @@ create or replace package body ExcelGen is
   procedure createStylesheet (
     ctx       in out nocopy context_t
   , styles    in CT_Stylesheet
-  , partName  in varchar2
   )
   is
     stream  stream_t;
@@ -2901,15 +3021,14 @@ create or replace package body ExcelGen is
     
     stream_write(stream, '</styleSheet>');
     stream_flush(stream);
-    --debug(xmltype(stream.content).getstringval(1,2));
-    addPart(ctx, partName, MT_STYLES, stream.content);
+    
+    addPart(ctx, 'xl/styles.xml', MT_STYLES, stream.content);
     
   end;
 
   procedure createStylesheetBin (
     ctx       in out nocopy context_t
   , styles    in CT_Stylesheet
-  , partName  in varchar2
   )
   is
     stream  xutl_xlsb.Stream_T := xutl_xlsb.new_stream();
@@ -3009,7 +3128,7 @@ create or replace package body ExcelGen is
     
     xutl_xlsb.put_simple_record(stream, 279); -- BrtEndStyleSheet
     xutl_xlsb.flush_stream(stream);
-    addPart(ctx, partName, MT_STYLES_BIN, stream.content);
+    addPart(ctx, 'xl/styles.bin', MT_STYLES_BIN, stream.content);
     
   end;
 
@@ -3084,6 +3203,77 @@ create or replace package body ExcelGen is
       addPart(ctx, 'xl/sharedStrings.bin', MT_SHAREDSTRINGS_BIN, stream.content);
     end if;
   end;
+  
+  function createImagePart (
+    ctx      in out nocopy context_t
+  , content  in blob
+  )
+  return pls_integer
+  is
+    image     image_t;
+    ext       varchar2(16);
+    checksum  varchar2(32);
+    bucket    imageList_t;
+    partIdx   pls_integer; 
+  begin
+        
+    -- PNG signature
+    if dbms_lob.substr(content, 8) = '89504E470D0A1A0A' then   
+      ext := putDefaultExtension(ctx, MT_PNG);
+      
+    -- JPEG signature, just checking the first 3 bytes (SOI + 1st byte of next marker)
+    elsif dbms_lob.substr(content, 3) = 'FFD8FF' then
+      ext := putDefaultExtension(ctx, MT_JPEG);
+    
+    -- GIF87a/89a signature, just checking the first 4 bytes (GIF8)
+    elsif dbms_lob.substr(content, 4) = '47494638' then
+      ext := putDefaultExtension(ctx, MT_GIF);
+      
+    else
+      error('Unsupported image type');
+    end if;
+
+    -- BLOB dedup?
+    if hash_available then
+      checksum := rawtohex(hashMD5(dbms_lob.substr(content, 2000))); -- MD5 of first 2000 bytes
+      if ctx.imageHashMap.exists(checksum) then
+        bucket := ctx.imageHashMap(checksum);
+        for i in 1 .. bucket.count loop
+          -- iterate through parts referenced in the matching bucket
+          partIdx := ctx.pck.partIndices(bucket(i).partName);
+          if dbms_lob.compare(content, ctx.pck.parts(partIdx).contentBin) = 0 then
+            image.valueMetadataId := bucket(i).valueMetadataId;
+            exit;
+          end if;
+        end loop;
+      end if;
+    end if;
+  
+    if image.valueMetadataId is null then
+      
+      ctx.images.extend;
+      -- ExcelGen only supports XLRICHVALUE metadata type which is used to implement the picture-in-cell feature,
+      -- so for now we're assuming the valueMetadata index match the image index
+      image.valueMetadataId := ctx.images.last;
+      image.partName := 'xl/media/image'||to_char(image.valueMetadataId)||'.'||ext;
+      ctx.images(image.valueMetadataId) := image;
+      
+      -- add image checksum if supported
+      if checksum is not null then
+        if bucket is null then
+          bucket := imageList_t();
+        end if;
+        bucket.extend;
+        bucket(bucket.last) := image;
+        ctx.imageHashMap(checksum) := bucket;
+      end if;
+      
+      addPart(ctx, image.partName, null, content);
+    
+    end if;
+    
+    return image.valueMetadataId;
+  end;
 
   procedure writeRowStart (
     stream  in out nocopy stream_t
@@ -3120,6 +3310,7 @@ create or replace package body ExcelGen is
   is
     cellRef  varchar2(10) := cell.c||to_char(cell.r);
     sst_idx  pls_integer;
+    vmId     pls_integer;
   begin
 
     case cell.v.st
@@ -3183,6 +3374,12 @@ create or replace package body ExcelGen is
                            end ||
                            '</c>');
     
+    when ST_IMAGE then
+      vmId := createImagePart(ctx, cell.v.blob_value);
+      stream_write(stream, '<c r="'||cellRef||'"'
+          ||case when cell.xfId != 0 then ' s="'||to_char(cell.xfId)||'"' end
+          ||' t="e" vm="'||to_char(vmId)||'"><v>#VALUE!</v></c>');
+      
     end case;
         
   end;
@@ -3194,6 +3391,7 @@ create or replace package body ExcelGen is
   )
   is
     sst_idx  pls_integer;
+    vmId     pls_integer;
   begin
 
     case cell.v.st
@@ -3240,6 +3438,15 @@ create or replace package body ExcelGen is
       , cellRef  => cell.c||to_char(cell.r)
       , refStyle => cell.f.refStyle
       );
+      
+    when ST_IMAGE then
+      vmId := createImagePart(ctx, cell.v.blob_value);
+      xutl_xlsb.put_CellImage(
+        stream
+      , colIndex => cell.cn-1
+      , styleRef => cell.xfId
+      , vmId     => vmId
+      ); 
     
     end case;
         
@@ -4570,9 +4777,7 @@ create or replace package body ExcelGen is
     sheet.partName := 'xl/worksheets/sheet'||to_char(sheet.sheetId)||'.xml';
 
     -- new sheet part
-    part.name := sheet.partName;
-    part.contentType := MT_WORKSHEET;
-    part.rels := CT_Relationships();
+    part := new_part(sheet.partName, MT_WORKSHEET);
       
     -- conditional formatting
     for i in 1 .. cfRules.count loop
@@ -5144,9 +5349,7 @@ create or replace package body ExcelGen is
     sheet.partName := 'xl/worksheets/sheet'||to_char(sheet.sheetId)||'.bin';
 
     -- new sheet part
-    part.name := sheet.partName;
-    part.contentType := MT_WORKSHEET_BIN;
-    part.rels := CT_Relationships();
+    part := new_part(sheet.partName, MT_WORKSHEET_BIN);
 
     -- conditional formatting
     if cfRules.count != 0 then
@@ -5443,11 +5646,9 @@ create or replace package body ExcelGen is
   )
   is
     stream  stream_t;
-    part    part_t;
+    part    part_t := new_part('xl/workbook.xml', MT_WORKBOOK);
   begin
-    part.name := 'xl/workbook.xml';
-    part.contentType := MT_WORKBOOK;
-    part.rels := CT_Relationships();
+    ctx.workbook.partName := part.name;
     stream := new_stream();
     
     stream_write(stream, '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">');
@@ -5530,7 +5731,7 @@ create or replace package body ExcelGen is
     createSharedStrings(ctx);
     addRelationship(ctx, part.name, RS_SHAREDSTRINGS, 'xl/sharedStrings.xml');
 
-    createStylesheet(ctx, ctx.workbook.styles, 'xl/styles.xml');
+    createStylesheet(ctx, ctx.workbook.styles);
     addRelationship(ctx, part.name, RS_STYLES, 'xl/styles.xml');
     
     for tableId in 1 .. ctx.workbook.tables.count loop
@@ -5547,12 +5748,9 @@ create or replace package body ExcelGen is
   )
   is
     stream  xutl_xlsb.Stream_T := xutl_xlsb.new_stream();
-    part    part_t;
+    part    part_t := new_part('xl/workbook.bin', null);
   begin
-    part.name := 'xl/workbook.bin';
-    part.contentType := null;
-    part.rels := CT_Relationships();
-    
+    ctx.workbook.partName := part.name;
     xutl_xlsb.put_simple_record(stream, 131); -- BrtBeginBook
     xutl_xlsb.put_defaultBookViews(stream, ctx.workbook.firstSheet - 1);
     xutl_xlsb.put_simple_record(stream, 143); -- BrtBeginBundleShs
@@ -5580,7 +5778,7 @@ create or replace package body ExcelGen is
     createSharedStringsBin(ctx);
     addRelationship(ctx, part.name, RS_SHAREDSTRINGS, 'xl/sharedStrings.bin');
     
-    createStylesheetBin(ctx, ctx.workbook.styles, 'xl/styles.bin');
+    createStylesheetBin(ctx, ctx.workbook.styles);
     addRelationship(ctx, part.name, RS_STYLES, 'xl/styles.bin');
     
     for tableId in 1 .. ctx.workbook.tables.count loop
@@ -5596,11 +5794,16 @@ create or replace package body ExcelGen is
     ctx   in out nocopy context_t
   )
   is
-    stream  stream_t := new_stream();
-  begin
-    
+    stream       stream_t := new_stream();
+    contentType  varchar2(256);
+  begin    
     stream_write(stream, '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">');
     -- default extensions
+    contentType := ctx.extensions.first;
+    while contentType is not null loop
+      stream_write(stream, '<Default Extension="'||ctx.extensions(contentType)||'" ContentType="'||contentType||'"/>');
+      contentType := ctx.extensions.next(contentType);
+    end loop;
     stream_write(stream, '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>');
     stream_write(stream, '<Default Extension="xml" ContentType="application/xml"/>');
     if ctx.fileType = FILE_XLSB then
@@ -6619,10 +6822,26 @@ create or replace package body ExcelGen is
     data.st := ST_FORMULA;
     data.varchar2_value := fmla;
     
-    --putFormulaCell(p_ctxId, p_sheetId, p_rowIdx, p_colIdx, fmla, xfId, p_anchorTableId, p_anchorPosition);
     putCellImpl(p_ctxId, p_sheetId, p_rowIdx, p_colIdx, data, p_style, p_anchorTableId, p_anchorPosition, hyperlink => true);
     
   end;
+  
+  procedure putImageCell (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowIdx          in pls_integer
+  , p_colIdx          in pls_integer
+  , p_image           in blob
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  )
+  is
+    data  data_t;
+  begin
+    data.st := ST_IMAGE;
+    data.blob_value := p_image;
+    putCellImpl(p_ctxId, p_sheetId, p_rowIdx, p_colIdx, data, null, p_anchorTableId, p_anchorPosition);
+  end;  
   
   procedure putCell (
     p_ctxId           in ctxHandle
@@ -7509,6 +7728,130 @@ $end
     addRelationship(ctx, null, RS_CORE, 'docProps/core.xml');
   end;
 
+  procedure createMetadata (
+    ctx  in out nocopy context_t
+  )
+  is
+    rdRichValueStructure  part_t;
+    rdRichValueStructureStream  stream_t;
+    
+    richValueRel        part_t;
+    richValueRelStream  stream_t;
+    
+    rdRichValue         part_t;
+    rdRichValueStream   stream_t;
+    
+    metadata            part_t;
+    metadataStream      stream_t;
+    metadataBinStream   xutl_xlsb.stream_t;
+    
+    rId           varchar2(256);
+    structId      pls_integer;
+    imageCount    pls_integer := ctx.images.count;
+    
+  begin
+    
+    if imageCount != 0 then
+  
+      structId := putLocalImageRvStruct(ctx.rvStructures);
+      
+      -- rdRichValueStructure.xml
+      rdRichValueStructure := new_part('xl/richData/rdrichvaluestructure.xml', MT_RDRICHVALUESTRUCTURE);
+      rdRichValueStructureStream := new_stream();
+      stream_write(rdRichValueStructureStream, '<rvStructures xmlns="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata" count="'||to_char(ctx.rvStructures.structs.count)||'">');
+      for i in 1 .. ctx.rvStructures.structs.count loop
+        stream_write(rdRichValueStructureStream, '<s t="'||ctx.rvStructures.structs(i).t||'">');
+        for j in 1 .. ctx.rvStructures.structs(i).keys.count loop
+          stream_write(rdRichValueStructureStream, '<k n="'||ctx.rvStructures.structs(i).keys(j).n||'" t="'||ctx.rvStructures.structs(i).keys(j).t||'"/>');
+        end loop;
+        stream_write(rdRichValueStructureStream, '</s>');
+      end loop;
+      stream_write(rdRichValueStructureStream, '</rvStructures>');
+      stream_flush(rdRichValueStructureStream);
+      rdRichValueStructure.content := rdRichValueStructureStream.content;
+      addPart(ctx, rdRichValueStructure);
+      addRelationship(ctx, ctx.workbook.partName, RS_RDRICHVALUESTRUCTURE, rdRichValueStructure.name);
+      
+      
+      -- richValueRel.xml
+      -- this part holds relationship ids to image parts
+      richValueRel := new_part('xl/richData/richValueRel.xml', MT_RICHVALUEREL);
+      richValueRelStream := new_stream();
+      stream_write(richValueRelStream, '<richValueRels xmlns="http://schemas.microsoft.com/office/spreadsheetml/2022/richvaluerel" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">');
+      
+      for i in 1 .. imageCount loop 
+        rId := addRelationship(richValueRel, RS_IMAGE, ctx.images(i).partName);
+        stream_write(richValueRelStream, '<rel r:id="'||rId||'"/>');   
+      end loop;
+      
+      stream_write(richValueRelStream, '</richValueRels>');
+      stream_flush(richValueRelStream);    
+      richValueRel.content := richValueRelStream.content;
+      addPart(ctx, richValueRel);
+      addRelationship(ctx, ctx.workbook.partName, RS_RICHVALUEREL, richValueRel.name);
+      
+      
+      -- rdRichValue.xml
+      -- the first value of each rv record is the 0-based index of the image in the richValueRel part 
+      rdRichValue := new_part('xl/richData/rdrichvalue.xml', MT_RDRICHVALUE);
+      rdRichValueStream := new_stream();
+      
+      stream_write(rdRichValueStream, '<rvData xmlns="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata" count="'||to_char(imageCount)||'">');
+      for i in 1 .. imageCount loop
+        stream_write(rdRichValueStream, '<rv s="'||to_char(structId)||'"><v>'||to_char(i-1)||'</v><v>5</v></rv>');
+      end loop;
+      
+      stream_write(rdRichValueStream, '</rvData>');
+      stream_flush(rdRichValueStream);
+      rdRichValue.content := rdRichValueStream.content;
+      addPart(ctx, rdRichValue);
+      addRelationship(ctx, ctx.workbook.partName, RS_RDRICHVALUE, rdRichValue.name);
+      
+      if ctx.fileType = FILE_XLSX then
+      
+        -- metadata.xml
+        metadata := new_part('xl/metadata.xml', MT_METADATA);
+        metadataStream := new_stream();
+        stream_write(metadataStream, '<metadata xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:xlrd="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata">');
+        stream_write(metadataStream, '<metadataTypes count="1"><metadataType name="XLRICHVALUE" minSupportedVersion="120000" copy="1" pasteAll="1" pasteValues="1" merge="1" splitFirst="1" rowColShift="1" clearFormats="1" clearComments="1" assign="1" coerce="1"/></metadataTypes>');
+        
+        stream_write(metadataStream, '<futureMetadata name="XLRICHVALUE" count="'||to_char(imageCount)||'">');
+        -- 0-based index of a richValue (rv) block in rdRichValue.xml part
+        for i in 1 .. imageCount loop
+          stream_write(metadataStream, '<bk><extLst><ext uri="{3e2802c4-a4d2-4d8b-9148-e3be6c30e623}"><xlrd:rvb i="'||to_char(i-1)||'"/></ext></extLst></bk>');
+        end loop;
+        stream_write(metadataStream, '</futureMetadata>');  
+        
+        stream_write(metadataStream, '<valueMetadata count="'||to_char(imageCount)||'">');
+        -- 0-based index of a futureMetadata block
+        for i in 1 .. imageCount loop        
+          stream_write(metadataStream, '<bk><rc t="1" v="'||to_char(i-1)||'"/></bk>');
+        end loop; 
+        stream_write(metadataStream, '</valueMetadata>');
+        
+        stream_write(metadataStream, '</metadata>');
+        stream_flush(metadataStream); --TODO? include flush flag in stream_write    
+        metadata.content := metadataStream.content; -- TODO? include stream_t in part_t
+      
+      else
+        
+        -- metadata.bin
+        metadata := new_part('xl/metadata.bin', MT_METADATA_BIN);
+        metadata.isBinary := true;
+        metadataBinStream := xutl_xlsb.new_stream();
+        xutl_xlsb.put_Metadata(metadataBinStream, imageCount);
+        xutl_xlsb.flush_stream(metadataBinStream);
+        metadata.contentBin := metadataBinStream.content;
+        
+      end if;
+      
+      addPart(ctx, metadata);
+      addRelationship(ctx, ctx.workbook.partName, RS_METADATA, metadata.name);
+    
+    end if;
+    
+  end;
+
   function getFileContent (
     p_ctxId  in ctxHandle
   )
@@ -7567,6 +7910,10 @@ $end
     
     -- core properties
     createCoreProperties(currentCtx);
+    
+    -- metadata
+    currentCtx.rvStructures.structs := ExcelTypes.CT_RichValueStructureList();
+    createMetadata(currentCtx);
     
     createContentTypes(currentCtx);
     createRels(currentCtx);
