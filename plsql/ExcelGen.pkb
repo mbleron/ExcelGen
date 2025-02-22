@@ -2338,6 +2338,9 @@ create or replace package body ExcelGen is
         else
           error('Unsupported data type: %d [%s], for column "%s"', dbColumnList(i).col_type, dbColumnList(i).col_type_name, dbColumnList(i).col_name);
         end if;
+      when dbms_sql.BLOB_TYPE then
+        dbms_sql.define_column(p_cursor_number, i, data.blob_value);
+        col.supertype := ST_IMAGE;
       else
         error('Unsupported data type: %d, for column "%s"', dbColumnList(i).col_type, dbColumnList(i).col_name);
       end case;
@@ -2514,6 +2517,10 @@ create or replace package body ExcelGen is
       data.db_type := dbms_sql.CLOB_TYPE;
       data.clob_value := v.AccessClob();
       data.st := ST_LOB;
+    when 'SYS.BLOB' then
+      data.db_type := dbms_sql.BLOB_TYPE;
+      data.blob_value := v.AccessBlob();
+      data.st := ST_IMAGE;
     else
       error('Unsupported data type: ''%s''', v.GetTypeName());
     end case;
@@ -2578,6 +2585,10 @@ create or replace package body ExcelGen is
         when dbms_sql.USER_DEFINED_TYPE then -- should be ANYDATA
           dbms_sql.column_value(sqlMeta.cursorNumber, dbId, data.anydata_value);
           prepareData(data, data.anydata_value);
+        
+        when dbms_sql.BLOB_TYPE then
+          dbms_sql.column_value(sqlMeta.cursorNumber, dbId, data.blob_value);
+        
         end case;
       
       else
@@ -5856,7 +5867,9 @@ create or replace package body ExcelGen is
     gzContent := utl_compress.lz_compress(binaryContent);
     gzSize := dbms_lob.getlength(gzContent);
     
-    dbms_lob.freetemporary(binaryContent);
+    if dbms_lob.istemporary(binaryContent) = 1 then
+      dbms_lob.freetemporary(binaryContent);
+    end if;
     
     dbms_lob.createtemporary(output, true);
     
@@ -5938,7 +5951,9 @@ create or replace package body ExcelGen is
       dbms_lob.freetemporary(entry.content);
       
       if pck.parts(i).isBinary then
-        dbms_lob.freetemporary(pck.parts(i).contentBin);
+        if dbms_lob.istemporary(pck.parts(i).contentBin) = 1 then
+          dbms_lob.freetemporary(pck.parts(i).contentBin);
+        end if;
       else
         dbms_lob.freetemporary(pck.parts(i).content);
       end if;

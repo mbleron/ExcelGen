@@ -3,7 +3,7 @@
 <p align="center"><img src="./resources/banner.png"/></p>
 
 ExcelGen is a PL/SQL utility to create Excel files (.xlsx, .xlsb) out of SQL data sources (query strings or cursors), with automatic pagination over multiple sheets.  
-It supports encryption, cell merging, various formatting options through a built-in API or CSS, table layout, formulas and defined names, data validation, and conditional formatting.  
+It supports encryption, cell merging, various formatting options through a built-in API or CSS, table layout, formulas and defined names, data validation, conditional formatting and in-cell images.  
 
 ## Content
 * [What's New in...](#whats-new-in)  
@@ -13,6 +13,7 @@ It supports encryption, cell merging, various formatting options through a built
 * [ExcelGen Subprograms and Usage](#excelgen-subprograms-and-usage)  
 * [Style specifications](#style-specifications)  
 * [Formula Support](#formula-support)
+* [Image Support](#image-support)
 * [Examples](#examples-3)  
 * [Copyright and license](#copyright-and-license)  
 
@@ -133,6 +134,7 @@ For simple requirements such as a single-table sheet, shortcut procedures and fu
   * [putRichTextCell](#putrichtextcell-procedure)
   * [putFormulaCell](#putformulacell-procedure)
   * [putHyperlinkCell](#puthyperlinkcell-procedure)
+  * [putImageCell](#putimagecell-procedure)
   * [mergeCells](#mergecells-procedure)
   * [makeCellRef](#makecellref-function)
   * [makeCellRange](#makecellrange-function)
@@ -300,7 +302,9 @@ Parameter|Description|Mandatory
 
 **Notes :**  
 Allowed SQL column data types are : 
-`VARCHAR2`, `CHAR`, `NUMBER`, `DATE`, `TIMESTAMP`, `TIMESTAMP WITH TIME ZONE`, `CLOB`, or `ANYDATA`, which must encapsulate one of the former scalar types.
+`VARCHAR2`, `CHAR`, `NUMBER`, `DATE`, `TIMESTAMP`, `TIMESTAMP WITH TIME ZONE`, `CLOB`, `BLOB` or `ANYDATA`, which must encapsulate one of the former scalar types.  
+
+The `BLOB` data type must be used exclusively for image content. See [Image Support](#image-support) for more information. 
 
 Pagination of the query results is only possible when this is the only table of the sheet.  
 
@@ -491,6 +495,28 @@ Parameter|Description|Mandatory
 ---|---|---
 `p_location`|Cf. [addTableHyperlinkColumn](#addtablehyperlinkcolumn-procedure).|Yes
 `p_linkName`|Cf. [addTableHyperlinkColumn](#addtablehyperlinkcolumn-procedure).|No
+
+---
+### putImageCell procedure
+Puts an image in a given cell.  
+See [putCell](#putcell-procedure) procedure for a description of common parameters.
+
+```sql
+procedure putImageCell (
+  p_ctxId           in ctxHandle
+, p_sheetId         in sheetHandle
+, p_rowIdx          in pls_integer
+, p_colIdx          in pls_integer
+, p_image           in blob
+, p_anchorTableId   in tableHandle default null
+, p_anchorPosition  in pls_integer default null
+)
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_image`|The image to insert in the cell, as a BLOB value. <br/>Must be in PNG, JPEG or GIF format.|Yes
+
 
 ---
 ### addDataValidationRule procedure
@@ -2624,6 +2650,12 @@ Formulas must be entered in English locale, specifically:
 ### Supported Excel functions  
 
 The list of supported functions is available [here](https://github.com/mbleron/ExcelCommons/blob/main/resources/excel-functions.csv).
+
+## Image Support
+
+ExcelGen supports the "Place-in-Cell" feature available in latest Excel versions (Microsoft 365).  
+Images must be provided in PNG, JPEG or GIF formats through BLOB values.  
+Values may come from BLOB columns in a table underlying SQL query, or from other sources when used to set individual cells via [putImageCell](#putimagecell-procedure) procedure.  
 
 
 ## Examples

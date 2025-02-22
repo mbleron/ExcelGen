@@ -1,5 +1,11 @@
 # Change Log
 
+## [4.4.0] - 2025-02-22
+
+### Added
+
+* Image support (Place-in-Cell) (#64)
+
 ## [4.3.1] - 2025-01-31
 
 ### Fixed
