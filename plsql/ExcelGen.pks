@@ -86,6 +86,16 @@ create or replace package ExcelGen is
   BOTTOM_RIGHT    constant pls_integer := 3;
   BOTTOM_LEFT     constant pls_integer := 4;
   
+  -- drawing anchor type
+  TWOCELL_ANCHOR   constant pls_integer := 0;
+  ONECELL_ANCHOR   constant pls_integer := 1;
+  ABSOLUTE_ANCHOR  constant pls_integer := 2;
+  
+  -- drawing behaviour when anchor cells are moved or resized
+  MOVE_RESIZE          constant pls_integer := 0;  -- twoCell
+  MOVE_NO_RESIZE       constant pls_integer := 1;  -- oneCell
+  NO_MOVE_NO_RESIZE    constant pls_integer := 2;  -- absolute
+  
   subtype CT_BorderPr is ExcelTypes.CT_BorderPr;
   subtype CT_Border is ExcelTypes.CT_Border;
   subtype CT_Font is ExcelTypes.CT_Font;
@@ -531,6 +541,26 @@ create or replace package ExcelGen is
   , p_image           in blob
   , p_anchorTableId   in tableHandle default null
   , p_anchorPosition  in pls_integer default null
+  );
+
+  procedure addImage (
+    p_ctxId       in ctxHandle
+  , p_sheetId     in sheetHandle
+  , p_image       in blob
+  , p_anchorType  in pls_integer
+  , p_posX        in varchar2 default null
+  , p_posY        in varchar2 default null
+  , p_extX        in varchar2 default null
+  , p_extY        in varchar2 default null
+  , p_fromCol     in pls_integer default null
+  , p_fromColOff  in varchar2 default null
+  , p_fromRow     in pls_integer default null
+  , p_fromRowOff  in varchar2 default null
+  , p_toCol       in pls_integer default null
+  , p_toColOff    in varchar2 default null
+  , p_toRow       in pls_integer default null
+  , p_toRowOff    in varchar2 default null
+  , p_editAs      in pls_integer default null
   );
 
   procedure addDataValidationRule (
