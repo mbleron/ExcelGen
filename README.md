@@ -3,7 +3,7 @@
 <p align="center"><img src="./resources/banner.png"/></p>
 
 ExcelGen is a PL/SQL utility to create Excel files (.xlsx, .xlsb) out of SQL data sources (query strings or cursors), with automatic pagination over multiple sheets.  
-It supports encryption, cell merging, various formatting options through a built-in API or CSS, table layout, formulas and defined names, data validation, conditional formatting and in-cell images.  
+It supports encryption, cell merging, various formatting options through a built-in API or CSS, table layout, formulas and defined names, data validation, conditional formatting and images.  
 
 ## Content
 * [What's New in...](#whats-new-in)  
@@ -172,6 +172,9 @@ For simple requirements such as a single-table sheet, shortcut procedures and fu
   * [setRangeStyle](#setrangestyle-procedure)  
   * [makeCondFmtStyle](#makecondfmtstyle-function)  
   * [makeCondFmtStyleCss](#makecondfmtstylecss-function)  
+* Image management
+  * [putImageCell](#putimagecell-procedure)
+  * [addImage](#addimage-procedure)
 ---
 
 ### createContext function
@@ -517,6 +520,72 @@ Parameter|Description|Mandatory
 ---|---|---
 `p_image`|The image to insert in the cell, as a BLOB value. <br/>Must be in PNG, JPEG or GIF format.|Yes
 
+---
+### addImage procedure
+Adds an image over cells in a given sheet.  
+The image is anchored within the sheet using one of the following type: 
+Anchor Type|Description
+---|---
+`TWOCELL_ANCHOR`|The top-left and bottom-right corners of the image are positioned relatively to specific cells. <br/>The image may (or may not) be moved and/or resized based on an additional property, see below.
+`ONECELL_ANCHOR`|The top-left corner of the image is anchored to a specific cell. The image moves with the anchor cell.
+`ABSOLUTE_ANCHOR`|The image is anchored at a fixed position within the sheet and will not be moved or resized.
+<br/>
+
+For a `TWOCELL_ANCHOR`, the move and resize behaviour is specified using one the following mode:
+Mode|Description
+---|---
+`MOVE_RESIZE`|**This is the default**. The image is moved and/or resized with anchor cells.
+`MOVE_NO_RESIZE`|The image is moved with the top-left anchor cell only.
+`NO_MOVE_NO_RESIZE`|The image will not be moved or resized.
+<br/>
+
+For cell-based anchor types `TWOCELL_ANCHOR` and `ONECELL_ANCHOR`, the base anchor point is the top-left of the cell. It can be shifted along the x and y axes using optional offsets in various units.
+
+TODO:units...
+
+millimetre `mm`, centimetre `cm`, inch `in`, point `pt`, pica `pc`|`pi`, pixel `px`
+
+```sql
+procedure addImage (
+  p_ctxId       in ctxHandle
+, p_sheetId     in sheetHandle
+, p_image       in blob
+, p_anchorType  in pls_integer
+, p_posX        in varchar2 default null
+, p_posY        in varchar2 default null
+, p_extX        in varchar2 default null
+, p_extY        in varchar2 default null
+, p_fromCol     in pls_integer default null
+, p_fromColOff  in varchar2 default null
+, p_fromRow     in pls_integer default null
+, p_fromRowOff  in varchar2 default null
+, p_toCol       in pls_integer default null
+, p_toColOff    in varchar2 default null
+, p_toRow       in pls_integer default null
+, p_toRowOff    in varchar2 default null
+, p_imageProps  in pls_integer default null
+);
+```
+
+Parameter|Description|TWOCELL|ONECELL|ABSOLUTE|Mandatory
+---|---|---|---|---|---
+`p_ctxId`|Context handle.||||Yes
+`p_sheetId`|Sheet handle.||||Yes
+`p_image`|Image to insert, as a BLOB. <br/>See [Image support](#image-support).||||Yes
+`p_type`|Anchor type, one of ExcelGen constants `TWOCELL_ANCHOR`, `ONECELL_ANCHOR` or `ABSOLUTE_ANCHOR`.||||Yes
+`p_posX`||||&#x2705;|Yes
+`p_posY`||||&#x2705;|Yes
+`p_extX`|||&#x2705;|&#x2705;|No
+`p_extY`|||&#x2705;|&#x2705;|No
+`p_fromCol`||&#x2705;|&#x2705;||Yes
+`p_fromColOff`||&#x2705;|&#x2705;||No
+`p_fromRow`||&#x2705;|&#x2705;||Yes
+`p_fromRowOff`||&#x2705;|&#x2705;||No
+`p_toCol`||&#x2705;|||Yes
+`p_toColOff`||&#x2705;|||No
+`p_toRow`||&#x2705;|||Yes
+`p_toRowOff`||&#x2705;|||No
+`p_imageProps`|Move/resize behaviour, one of ExcelGen constants `MOVE_RESIZE`, `MOVE_NO_RESIZE` or `NO_MOVE_NO_RESIZE`.|&#x2705;|||No
 
 ---
 ### addDataValidationRule procedure
@@ -2653,10 +2722,15 @@ The list of supported functions is available [here](https://github.com/mbleron/E
 
 ## Image Support
 
-ExcelGen supports the "Place-in-Cell" feature available in latest Excel versions (Microsoft 365).  
-Images must be provided in PNG, JPEG or GIF formats through BLOB values.  
+ExcelGen supports the "Place-over-Cell" feature, as well as "Place-in-Cell" available in latest Excel versions (Microsoft 365).  
+Images must be provided in PNG, JPEG, GIF or SVG(*) formats through BLOB values.  
 Values may come from BLOB columns in a table underlying SQL query, or from other sources when used to set individual cells via [putImageCell](#putimagecell-procedure) procedure.  
 
+(*) SVG support was added in Office 365, with the following behaviours depending on how it is used:  
+* Place-in-Cell: Excel converts and stores the image in PNG format only, so its vector nature is lost.
+* Place-over-Cell: Excel stores both the original SVG and a PNG version, so that another non SVG-enabled Excel can still display the raster version.  
+
+ExcelGen only supports the "Place-over-Cell" behaviour, with a dummy fallback PNG image.  
 
 ## Examples
 

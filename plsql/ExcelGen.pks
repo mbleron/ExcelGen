@@ -560,7 +560,7 @@ create or replace package ExcelGen is
   , p_toColOff    in varchar2 default null
   , p_toRow       in pls_integer default null
   , p_toRowOff    in varchar2 default null
-  , p_editAs      in pls_integer default null
+  , p_imageProps  in pls_integer default null
   );
 
   procedure addDataValidationRule (
@@ -949,6 +949,10 @@ $end
   , p_tableId  in tableHandle default null
   ) 
   return pls_integer;
+  
+  function crc32 (f in blob, offset in integer default null, amount in integer default null) return raw;
+  function adler32 (f in blob) return raw;
+  function blobToXml (input  in blob) return XMLType;
 
 end ExcelGen;
 /
