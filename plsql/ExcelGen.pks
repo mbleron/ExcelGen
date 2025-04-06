@@ -786,8 +786,9 @@ create or replace package ExcelGen is
     p_ctxId    in ctxHandle
   , p_sheetId  in sheetHandle
   , p_tableId  in pls_integer
-  , p_rowId    in pls_integer
-  , p_style    in cellStyleHandle
+  , p_rowId    in pls_integer default null
+  , p_style    in cellStyleHandle default null
+  , p_height   in number default null
   );
 
   procedure addTableCondFmtRule (
@@ -949,10 +950,6 @@ $end
   , p_tableId  in tableHandle default null
   ) 
   return pls_integer;
-  
-  function crc32 (f in blob, offset in integer default null, amount in integer default null) return raw;
-  function adler32 (f in blob) return raw;
-  function blobToXml (input  in blob) return XMLType;
 
 end ExcelGen;
 /

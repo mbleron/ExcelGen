@@ -494,6 +494,7 @@ create or replace package body ExcelGen is
   , showColumnStripes  boolean
   , anchorRef          anchorRef_t
   , cfRules            ExcelTypes.CT_CfRules
+  , rowProps           rowProperties_t
   );
   
   type tableTreeNode_t is record (nodeId pls_integer, children intList_t);
@@ -3636,7 +3637,7 @@ create or replace package body ExcelGen is
     procedure endChunk is
     begin
       dbms_lob.write(output, 4, chnk.ptr, utl_raw.cast_from_binary_integer(chnk.len));
-      write(excelgen.crc32(output, chnk.ptr + 4, chnk.len + 4));
+      write(crc32(output, chnk.ptr + 4, chnk.len + 4));
     end;
 
   begin
@@ -3676,7 +3677,7 @@ create or replace package body ExcelGen is
     gz := utl_compress.lz_compress(input);
       
     writeChunkData(dbms_lob.substr(gz, dbms_lob.getlength(gz)-18, 11)); -- extract DEFLATE content
-    writeChunkData(excelgen.adler32(input));
+    writeChunkData(adler32(input));
     -- end ZLIB content
     endChunk();
     
@@ -3716,13 +3717,13 @@ create or replace package body ExcelGen is
   )
   return varchar2
   is
-    stream   stream_t := new_stream();
-    image    image_t;
+    stream  stream_t := new_stream();
+    image   image_t;
     image2  image_t; -- fallback image
-    part     part_t;
-    rId      varchar2(256);
-    rId2     varchar2(256); -- fallback rId
-    a        CT_DrawingAnchor;
+    part    part_t;
+    rId     varchar2(256);
+    rId2    varchar2(256); -- fallback rId
+    a       CT_DrawingAnchor;
     
     procedure write_marker (tag in varchar2, mk in CT_Marker) is
     begin
@@ -4836,6 +4837,7 @@ create or replace package body ExcelGen is
     
     hasRange        boolean;
     headerXfId      pls_integer;
+    rowProps        rowProperties_t;
     
     emptyPartition  exception;
     
@@ -5001,8 +5003,21 @@ create or replace package body ExcelGen is
         
         t.sqlMetadata.r_num := t.sqlMetadata.r_num + 1;
         
+        -- retrieve this row properties if set, else inherit from table-level settings
+        if t.rowMap.exists(t.sqlMetadata.r_num) then
+          rowProps.xfId := nvl(t.rowMap(t.sqlMetadata.r_num).xfId, t.rowProps.xfId);
+          rowProps.height := nvl(t.rowMap(t.sqlMetadata.r_num).height, t.rowProps.height);
+        else
+          rowProps := t.rowProps;
+        end if;
+        
         if sd.streamable then
+          -- use row-level height
+          r.props.height := rowProps.height;
           writeRowStart(stream, r);
+        else
+          -- overwrite sheet-level row height
+          sd.data.rows(cell.r).props.height := rowProps.height;
         end if;
         
         -- read current row
@@ -5023,8 +5038,8 @@ create or replace package body ExcelGen is
             end if;
 
             -- merge table row-level style
-            if t.rowMap.exists(t.sqlMetadata.r_num) and t.rowMap(t.sqlMetadata.r_num).xfId is not null then
-              cell.xfId := mergeCellStyle(ctx, t.rowMap(t.sqlMetadata.r_num).xfId, cell.xfId);
+            if rowProps.xfId is not null then
+              cell.xfId := mergeCellStyle(ctx, rowProps.xfId, cell.xfId);
             end if;
             
             -- (shared) formula
@@ -5412,6 +5427,7 @@ create or replace package body ExcelGen is
     
     hasRange        boolean;
     headerXfId      pls_integer;
+    rowProps        rowProperties_t;
     
     emptyPartition  exception;
 
@@ -5571,9 +5587,22 @@ create or replace package body ExcelGen is
         cell.r := r.id;
         
         t.sqlMetadata.r_num := t.sqlMetadata.r_num + 1;
+
+        -- retrieve this row properties if set, else inherit from table-level settings
+        if t.rowMap.exists(t.sqlMetadata.r_num) then
+          rowProps.xfId := nvl(t.rowMap(t.sqlMetadata.r_num).xfId, t.rowProps.xfId);
+          rowProps.height := nvl(t.rowMap(t.sqlMetadata.r_num).height, t.rowProps.height);
+        else
+          rowProps := t.rowProps;
+        end if;
         
         if sd.streamable then
+          -- use row-level height
+          r.props.height := rowProps.height;
           writeRowBin(stream, r, sd.defaultRowHeight);
+        else
+          -- overwrite sheet-level row height
+          sd.data.rows(cell.r).props.height := rowProps.height;
         end if;
         
         -- read current row
@@ -5594,8 +5623,8 @@ create or replace package body ExcelGen is
             end if;
             
             -- merge table row-level style
-            if t.rowMap.exists(t.sqlMetadata.r_num) and t.rowMap(t.sqlMetadata.r_num).xfId is not null then
-              cell.xfId := mergeCellStyle(ctx, t.rowMap(t.sqlMetadata.r_num).xfId, cell.xfId);
+            if rowProps.xfId is not null then
+              cell.xfId := mergeCellStyle(ctx, rowProps.xfId, cell.xfId);
             end if;            
 
             -- (shared) formula
@@ -7781,8 +7810,9 @@ create or replace package body ExcelGen is
     p_ctxId    in ctxHandle
   , p_sheetId  in sheetHandle
   , p_tableId  in pls_integer
-  , p_rowId    in pls_integer
-  , p_style    in cellStyleHandle
+  , p_rowId    in pls_integer default null
+  , p_style    in cellStyleHandle default null
+  , p_height   in number default null
   )
   is
     props  rowProperties_t;
@@ -7790,7 +7820,12 @@ create or replace package body ExcelGen is
     loadContext(p_ctxId);
     assertTableExists(p_sheetId, p_tableId);
     props.xfId := p_style;
-    currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).rowMap(p_rowId) := props;
+    props.height := p_height;
+    if p_rowId is not null then
+      currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).rowMap(p_rowId) := props;
+    else
+      currentCtx.sheetDefinitionMap(p_sheetId).tableList(p_tableId).rowProps := props;
+    end if;
   end;
 
   procedure setTableColumnProperties (
@@ -8082,8 +8117,6 @@ create or replace package body ExcelGen is
     loadContext(p_ctxId);
     currentCtx.sheetDefinitionMap(p_sheetId).defaultFmts.timestampFmt := p_format;
   end;
-
-  --procedure setBookProperties (
 
   procedure setRowProperties (
     p_ctxId    in ctxHandle

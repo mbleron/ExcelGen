@@ -531,7 +531,7 @@ Anchor Type|Description
 `ABSOLUTE_ANCHOR`|The image is anchored at a fixed position within the sheet and will not be moved or resized.
 <br/>
 
-For a `TWOCELL_ANCHOR`, the move and resize behaviour is specified using one the following mode:
+For `TWOCELL_ANCHOR`, the move and resize behaviour is specified using one the following mode:
 Mode|Description
 ---|---
 `MOVE_RESIZE`|**This is the default**. The image is moved and/or resized with anchor cells.
@@ -539,11 +539,8 @@ Mode|Description
 `NO_MOVE_NO_RESIZE`|The image will not be moved or resized.
 <br/>
 
-For cell-based anchor types `TWOCELL_ANCHOR` and `ONECELL_ANCHOR`, the base anchor point is the top-left of the cell. It can be shifted along the x and y axes using optional offsets in various units.
-
-TODO:units...
-
-millimetre `mm`, centimetre `cm`, inch `in`, point `pt`, pica `pc`|`pi`, pixel `px`
+For cell-based anchor types `TWOCELL_ANCHOR` and `ONECELL_ANCHOR`, the base anchor point is the top-left of the cell. It can be shifted along the X and Y axes using optional offsets in various units.  
+See [Image support](#image-positioning-and-measurement-units) for more information about image positioning and measurement units.  
 
 ```sql
 procedure addImage (
@@ -567,24 +564,28 @@ procedure addImage (
 );
 ```
 
+* Parameters `p_ctxId` through `p_type` are mandatory.
+* Each anchor type has a dedicated subset of parameters from `p_posX` through `p_imageProps`.  
+See column TWOCELL, ONECELL and ABSOLUTE below.
+
 Parameter|Description|TWOCELL|ONECELL|ABSOLUTE|Mandatory
 ---|---|---|---|---|---
 `p_ctxId`|Context handle.||||Yes
 `p_sheetId`|Sheet handle.||||Yes
 `p_image`|Image to insert, as a BLOB. <br/>See [Image support](#image-support).||||Yes
 `p_type`|Anchor type, one of ExcelGen constants `TWOCELL_ANCHOR`, `ONECELL_ANCHOR` or `ABSOLUTE_ANCHOR`.||||Yes
-`p_posX`||||&#x2705;|Yes
-`p_posY`||||&#x2705;|Yes
-`p_extX`|||&#x2705;|&#x2705;|No
-`p_extY`|||&#x2705;|&#x2705;|No
-`p_fromCol`||&#x2705;|&#x2705;||Yes
-`p_fromColOff`||&#x2705;|&#x2705;||No
-`p_fromRow`||&#x2705;|&#x2705;||Yes
-`p_fromRowOff`||&#x2705;|&#x2705;||No
-`p_toCol`||&#x2705;|||Yes
-`p_toColOff`||&#x2705;|||No
-`p_toRow`||&#x2705;|||Yes
-`p_toRowOff`||&#x2705;|||No
+`p_posX`|Top-left X coordinate.|||&#x2705;|Yes
+`p_posY`|Top-left Y coordinate.|||&#x2705;|Yes
+`p_extX`|Width (X-axis extent). If omitted, defaults to the image width in pixel unit.||&#x2705;|&#x2705;|No
+`p_extY`|Height (Y-axis extent). If omitted, default to image height in pixel unit.||&#x2705;|&#x2705;|No
+`p_fromCol`|Top-left cell column index (1-based).|&#x2705;|&#x2705;||Yes
+`p_fromColOff`|Column offset within the top-left cell.|&#x2705;|&#x2705;||No
+`p_fromRow`|Top-left cell row index.|&#x2705;|&#x2705;||Yes
+`p_fromRowOff`|Row offset within the top-left cell.|&#x2705;|&#x2705;||No
+`p_toCol`|Bottom-right cell column index.|&#x2705;|||Yes
+`p_toColOff`|Column offset within the bottom-right cell.|&#x2705;|||No
+`p_toRow`|Bottom-right cell row index.|&#x2705;|||Yes
+`p_toRowOff`|Row offset within the bottom-right cell.|&#x2705;|||No
 `p_imageProps`|Move/resize behaviour, one of ExcelGen constants `MOVE_RESIZE`, `MOVE_NO_RESIZE` or `NO_MOVE_NO_RESIZE`.|&#x2705;|||No
 
 ---
@@ -1189,8 +1190,9 @@ procedure setTableRowProperties (
   p_ctxId    in ctxHandle
 , p_sheetId  in sheetHandle
 , p_tableId  in pls_integer
-, p_rowId    in pls_integer
-, p_style    in cellStyleHandle
+, p_rowId    in pls_integer default null
+, p_style    in cellStyleHandle default null
+, p_height   in number default null
 );
 ```
 
@@ -1199,8 +1201,9 @@ Parameter|Description|Mandatory
 `p_ctxId`|Context handle.|Yes
 `p_sheetId`|Sheet handle.|Yes
 `p_tableId`|Table handle.|Yes
-`p_rowId`|Local row index, relative to the beginning of the table.|Yes
-`p_style`|Cell style handle created via [makeCellStyle](#makecellstyle-function) or [makeCellStyleCss](#makecellstylecss-function) function.|Yes
+`p_rowId`|Local row index, relative to the beginning of the table (header excluded).  <br/>If NULL, the settings will apply to all rows of the table.|No
+`p_style`|Cell style handle created via [makeCellStyle](#makecellstyle-function) or [makeCellStyleCss](#makecellstylecss-function) function.|No
+`p_height`|Row height in points.|No
 
 ---
 ### addTableColumn procedure
@@ -2722,15 +2725,39 @@ The list of supported functions is available [here](https://github.com/mbleron/E
 
 ## Image Support
 
+### Generalities
 ExcelGen supports the "Place-over-Cell" feature, as well as "Place-in-Cell" available in latest Excel versions (Microsoft 365).  
 Images must be provided in PNG, JPEG, GIF or SVG(*) formats through BLOB values.  
 Values may come from BLOB columns in a table underlying SQL query, or from other sources when used to set individual cells via [putImageCell](#putimagecell-procedure) procedure.  
 
-(*) SVG support was added in Office 365, with the following behaviours depending on how it is used:  
+(*) SVG support was added in Office 365, with the following behaviour depending on how it is used:  
 * Place-in-Cell: Excel converts and stores the image in PNG format only, so its vector nature is lost.
 * Place-over-Cell: Excel stores both the original SVG and a PNG version, so that another non SVG-enabled Excel can still display the raster version.  
 
-ExcelGen only supports the "Place-over-Cell" behaviour, with a dummy fallback PNG image.  
+ExcelGen only supports SVG using the "Place-over-Cell" behaviour, with a dummy fallback PNG image.  
+
+### Image positioning and measurement units
+
+The "Place-over-Cell" feature is supported through [addImage](#addimage-procedure) procedure. It allows precise positioning of the image within a given sheet, either at an absolute position or anchored to specific cells.  
+Cell anchors must be given as 1-based indices, while offsets may be specified in various usual length units.  
+
+![image-positioning](./resources/image-positioning.png)
+
+Allowed units for absolute positioning, image extents and offsets, with informative conversions assuming a default 96 DPI display:
+
+&nbsp;|EMU|cm|mm|in|pc|pt|px
+:--|--:|--:|--:|--:|--:|--:|--:
+**EMU**|1|1/360000|1/3600000|1/914400|1/152400|1/12700|1/9525
+**cm (centimetre)**|360000|1|10|1/2.54|6/2.54|72/2.54|96/2.54
+**mm (millimetre)**|3600000|0.1|1|1/25.4|6/2.54|72/25.4|96/25.4
+**in (inch)**|914400|2.54|25.4|1|6|72|96
+**pc (pica)**|152400|2.54/6|25.4/6|1/6|1|12|16
+**pt (point)**|12700|2.54/72|25.4/72|1/72|1/12|1|4/3
+**px (pixel)**|9525|2.54/96|25.4/96|1/96|1/16|3/4|1
+
+In this matrix, 1 unit in the first column is equal to 1 unit in the first row times the value at the intersection, e.g. 1in = 96px, or 1pt = 12700 EMU.
+
+Except for EMU, measurement must be specified using the numeric value immediately followed by the unit identifier, e.g. `100px`, `12.3cm`.
 
 ## Examples
 
