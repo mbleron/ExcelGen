@@ -2734,7 +2734,7 @@ Values may come from BLOB columns in a table underlying SQL query, or from other
 * Place-in-Cell: Excel converts and stores the image in PNG format only, so its vector nature is lost.
 * Place-over-Cell: Excel stores both the original SVG and a PNG version, so that another non SVG-enabled Excel can still display the raster version.  
 
-ExcelGen only supports SVG using the "Place-over-Cell" behaviour, with a dummy fallback PNG image.  
+ExcelGen only supports SVG using the "Place-over-Cell" behaviour, with a dummy fallback PNG image created automatically.  
 
 ### Image positioning and measurement units
 
@@ -2777,6 +2777,7 @@ Except for EMU, measurement must be specified using the numeric value immediatel
 * [Hyperlinks](#hyperlinks)
 * [Data validation](#data-validation)
 * [Conditional formatting](#conditional-formatting-1)
+* [Images](#images)
 
 #### Single query to sheet mapping, with header formatting
 [employees.sql](./test_cases/employees.sql) &#8594; [employees.xlsx](./samples/employees.xlsx)
@@ -3135,6 +3136,81 @@ Creates a workbook with various data validation rules.
 #### Conditional formatting
 Creates a workbook with various conditional formatting rules.  
 [cond-formatting.sql](./test_cases/cond-formatting.sql) &#8594; [cond-formatting.xlsx](./samples/cond-formatting.xlsx)
+
+### Images
+In-cell images from SQL query: [test-image-1.xlsx](./samples/test-image-1.xlsx)  
+[Data source: [create_table_country_flags.sql](./test_cases/create_table_country_flags.sql)]
+```
+declare
+  ctx     ExcelGen.ctxHandle := ExcelGen.createContext(ExcelGen.FILE_XLSX);
+  sheet1  ExcelGen.sheetHandle := ExcelGen.addSheet(ctx, 'selector');
+  sheet2  ExcelGen.sheetHandle := ExcelGen.addSheet(ctx, 'data');
+  table1  ExcelGen.tableHandle := ExcelGen.addTable(ctx, sheet2, 'select iso2_code, un_code, label_en, image_png from country_flags order by iso2_code');
+begin
+  -- data table holding flags info
+  ExcelGen.setTableHeader(ctx, sheet2, table1);
+  ExcelGen.setTableRowProperties(ctx, sheet2, table1, p_height => 30);
+  ExcelGen.setColumnProperties(ctx, sheet2, 3, p_width => 40); 
+  ExcelGen.setTableProperties(ctx, sheet2, table1, p_tableName => 'FlagList');
+  
+  -- selector sheet
+  ExcelGen.putStringCell(ctx, sheet1, 2, 2, 'Select a country', p_style => ExcelGen.makeCellStyleCss(ctx,'font-size:16pt;font-weight:bold;text-align:center'));
+  
+  -- list of country codes validated against the data sheet
+  ExcelGen.putStringCell(ctx, sheet1, 2, 3, 'FR', p_style => ExcelGen.makeCellStyleCss(ctx,'font-size:24pt;font-weight:bold;text-align:center'));
+  ExcelGen.addDataValidationRule(ctx, sheet1, 'list', ExcelTypes.ST_Sqref('C2'), p_value1 => 'INDEX(INDIRECT("FlagList"),0,1)');
+  
+  ExcelGen.mergeCells(ctx, sheet1, 'B3:C15');
+  ExcelGen.mergeCells(ctx, sheet1, 'B16:C16');
+  
+  -- a couple of VLOOKUP calls to retrieve selected country flag and name from the data sheet
+  ExcelGen.putFormulaCell(ctx, sheet1, 3, 2, 'VLOOKUP($C$2,INDIRECT("FlagList"),4,FALSE)');
+  ExcelGen.putFormulaCell(ctx, sheet1, 16, 2, 'VLOOKUP($C$2,INDIRECT("FlagList"),3,FALSE)', p_style => ExcelGen.makeCellStyleCss(ctx,'font-size:16pt;font-weight:bold;text-align:center'));
+  
+  -- more formatting
+  ExcelGen.setColumnProperties(ctx, sheet1, 1, p_width => ExcelGen.colPxToCharWidth(10));
+  ExcelGen.setRowProperties(ctx, sheet1, 1, p_height => ExcelGen.rowPxToPt(10));
+  ExcelGen.setColumnProperties(ctx, sheet1, 2, p_width => 56);
+  ExcelGen.setRowProperties(ctx, sheet1, 2, p_height => 40);
+  ExcelGen.setRowProperties(ctx, sheet1, 16, p_height => 30);
+  ExcelGen.setRangeStyle(ctx, sheet1, 'B2:C16', p_style => ExcelGen.makeCellStyleCss(ctx,'border:medium solid black'));
+  ExcelGen.setSheetProperties(ctx, sheet1, p_showGridLines => false);
+  
+  ExcelGen.setDefaultStyle(ctx, ExcelGen.makeCellStyleCss(ctx, 'vertical-align:middle'));
+  
+  ExcelGen.createFile(ctx, 'TEST_DIR', 'test-image-1.xlsx');
+end;
+/
+```
+Individual in and over-cell images: [test-image-2.xlsx](./samples/test-image-2.xlsx)  
+```
+declare
+  ctx     ExcelGen.ctxHandle := ExcelGen.createContext(ExcelGen.FILE_XLSX);
+  sheet1  ExcelGen.sheetHandle := ExcelGen.addSheet(ctx, 'sheet1');
+  -- this is a 400x200 black rectangle in PNG format:
+  img     blob := utl_encode.base64_decode(utl_raw.cast_to_raw('iVBORw0KGgoAAAANSUhEUgAAAZAAAADIAQAAAADubopPAAAAIUlEQVR4nO3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAIAXAyfYAAEIK90SAAAAAElFTkSuQmCC'));
+begin
+  
+  -- in-cell image at C2
+  ExcelGen.putImageCell(ctx, sheet1, 2, 3, img);
+  
+  -- over-cell image anchored at B4 with 10px offsets
+  ExcelGen.addImage (
+    p_ctxId       => ctx
+  , p_sheetId     => sheet1
+  , p_image       => img
+  , p_anchorType  => ExcelGen.ONECELL_ANCHOR
+  , p_fromCol     => 2
+  , p_fromColOff  => '10px'
+  , p_fromRow     => 4
+  , p_fromRowOff  => '10px'
+  );  
+  
+  ExcelGen.createFile(ctx, 'TEST_DIR', 'test-image-2.xlsx');
+end;
+/
+```
+
 
 ## Copyright and license
 
