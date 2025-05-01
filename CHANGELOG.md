@@ -1,5 +1,15 @@
 # Change Log
 
+## [4.4.0] - 2025-05-01
+
+### Added
+
+* Image support (#64)
+
+### Fixed
+
+* Issue #74 (documentation bug)
+
 ## [4.3.1] - 2025-01-31
 
 ### Fixed

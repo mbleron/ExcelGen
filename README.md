@@ -3,7 +3,7 @@
 <p align="center"><img src="./resources/banner.png"/></p>
 
 ExcelGen is a PL/SQL utility to create Excel files (.xlsx, .xlsb) out of SQL data sources (query strings or cursors), with automatic pagination over multiple sheets.  
-It supports encryption, cell merging, various formatting options through a built-in API or CSS, table layout, formulas and defined names, data validation, and conditional formatting.  
+It supports encryption, cell merging, various formatting options through a built-in API or CSS, table layout, formulas and defined names, data validation, conditional formatting and images.  
 
 ## Content
 * [What's New in...](#whats-new-in)  
@@ -13,11 +13,13 @@ It supports encryption, cell merging, various formatting options through a built
 * [ExcelGen Subprograms and Usage](#excelgen-subprograms-and-usage)  
 * [Style specifications](#style-specifications)  
 * [Formula Support](#formula-support)
+* [Image Support](#image-support)
 * [Examples](#examples-3)  
 * [Copyright and license](#copyright-and-license)  
 
 ## What's New in...
 
+> Version 4.4 : image support  
 > Version 4.0 : defined names and formulas support  
 > Version 3.0 : cell API, CSS styling support, multitable sheet, merged cells  
 > Version 2.0 : support for XLSB format output  
@@ -133,6 +135,7 @@ For simple requirements such as a single-table sheet, shortcut procedures and fu
   * [putRichTextCell](#putrichtextcell-procedure)
   * [putFormulaCell](#putformulacell-procedure)
   * [putHyperlinkCell](#puthyperlinkcell-procedure)
+  * [putImageCell](#putimagecell-procedure)
   * [mergeCells](#mergecells-procedure)
   * [makeCellRef](#makecellref-function)
   * [makeCellRange](#makecellrange-function)
@@ -170,6 +173,9 @@ For simple requirements such as a single-table sheet, shortcut procedures and fu
   * [setRangeStyle](#setrangestyle-procedure)  
   * [makeCondFmtStyle](#makecondfmtstyle-function)  
   * [makeCondFmtStyleCss](#makecondfmtstylecss-function)  
+* Image management
+  * [putImageCell](#putimagecell-procedure)
+  * [addImage](#addimage-procedure)
 ---
 
 ### createContext function
@@ -300,7 +306,9 @@ Parameter|Description|Mandatory
 
 **Notes :**  
 Allowed SQL column data types are : 
-`VARCHAR2`, `CHAR`, `NUMBER`, `DATE`, `TIMESTAMP`, `TIMESTAMP WITH TIME ZONE`, `CLOB`, or `ANYDATA`, which must encapsulate one of the former scalar types.
+`VARCHAR2`, `CHAR`, `NUMBER`, `DATE`, `TIMESTAMP`, `TIMESTAMP WITH TIME ZONE`, `CLOB`, `BLOB` or `ANYDATA`, which must encapsulate one of the former scalar types.  
+
+The `BLOB` data type must be used exclusively for image content. See [Image Support](#image-support) for more information. 
 
 Pagination of the query results is only possible when this is the only table of the sheet.  
 
@@ -491,6 +499,95 @@ Parameter|Description|Mandatory
 ---|---|---
 `p_location`|Cf. [addTableHyperlinkColumn](#addtablehyperlinkcolumn-procedure).|Yes
 `p_linkName`|Cf. [addTableHyperlinkColumn](#addtablehyperlinkcolumn-procedure).|No
+
+---
+### putImageCell procedure
+Puts an image in a given cell.  
+See [putCell](#putcell-procedure) procedure for a description of common parameters.
+
+```sql
+procedure putImageCell (
+  p_ctxId           in ctxHandle
+, p_sheetId         in sheetHandle
+, p_rowIdx          in pls_integer
+, p_colIdx          in pls_integer
+, p_image           in blob
+, p_anchorTableId   in tableHandle default null
+, p_anchorPosition  in pls_integer default null
+)
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_image`|The image to insert in the cell, as a BLOB value. <br/>Must be in PNG, JPEG or GIF format.|Yes
+
+---
+### addImage procedure
+Adds an image over cells in a given sheet.  
+The image is anchored within the sheet using one of the following type: 
+Anchor Type|Description
+---|---
+`TWOCELL_ANCHOR`|The top-left and bottom-right corners of the image are positioned relatively to specific cells. <br/>The image may (or may not) be moved and/or resized based on an additional property, see below.
+`ONECELL_ANCHOR`|The top-left corner of the image is anchored to a specific cell. The image moves with the anchor cell.
+`ABSOLUTE_ANCHOR`|The image is anchored at a fixed position within the sheet and will not be moved or resized.
+<br/>
+
+For `TWOCELL_ANCHOR`, the move and resize behaviour is specified using one the following mode:
+Mode|Description
+---|---
+`MOVE_RESIZE`|**This is the default**. The image is moved and/or resized with anchor cells.
+`MOVE_NO_RESIZE`|The image is moved with the top-left anchor cell only.
+`NO_MOVE_NO_RESIZE`|The image will not be moved or resized.
+<br/>
+
+For cell-based anchor types `TWOCELL_ANCHOR` and `ONECELL_ANCHOR`, the base anchor point is the top-left of the cell. It can be shifted along the X and Y axes using optional offsets in various units.  
+See [Image support](#image-positioning-and-measurement-units) for more information about image positioning and measurement units.  
+
+```sql
+procedure addImage (
+  p_ctxId       in ctxHandle
+, p_sheetId     in sheetHandle
+, p_image       in blob
+, p_anchorType  in pls_integer
+, p_posX        in varchar2 default null
+, p_posY        in varchar2 default null
+, p_extX        in varchar2 default null
+, p_extY        in varchar2 default null
+, p_fromCol     in pls_integer default null
+, p_fromColOff  in varchar2 default null
+, p_fromRow     in pls_integer default null
+, p_fromRowOff  in varchar2 default null
+, p_toCol       in pls_integer default null
+, p_toColOff    in varchar2 default null
+, p_toRow       in pls_integer default null
+, p_toRowOff    in varchar2 default null
+, p_imageProps  in pls_integer default null
+);
+```
+
+* Parameters `p_ctxId` through `p_type` are mandatory.
+* Each anchor type has a dedicated subset of parameters from `p_posX` through `p_imageProps`.  
+See column TWOCELL, ONECELL and ABSOLUTE below.
+
+Parameter|Description|TWOCELL|ONECELL|ABSOLUTE|Mandatory
+---|---|---|---|---|---
+`p_ctxId`|Context handle.||||Yes
+`p_sheetId`|Sheet handle.||||Yes
+`p_image`|Image to insert, as a BLOB. <br/>See [Image support](#image-support).||||Yes
+`p_type`|Anchor type, one of ExcelGen constants `TWOCELL_ANCHOR`, `ONECELL_ANCHOR` or `ABSOLUTE_ANCHOR`.||||Yes
+`p_posX`|Top-left X coordinate.|||&#x2705;|Yes
+`p_posY`|Top-left Y coordinate.|||&#x2705;|Yes
+`p_extX`|Width (X-axis extent). If omitted, defaults to the image width in pixel unit.||&#x2705;|&#x2705;|No
+`p_extY`|Height (Y-axis extent). If omitted, default to image height in pixel unit.||&#x2705;|&#x2705;|No
+`p_fromCol`|Top-left cell column index (1-based).|&#x2705;|&#x2705;||Yes
+`p_fromColOff`|Column offset within the top-left cell.|&#x2705;|&#x2705;||No
+`p_fromRow`|Top-left cell row index.|&#x2705;|&#x2705;||Yes
+`p_fromRowOff`|Row offset within the top-left cell.|&#x2705;|&#x2705;||No
+`p_toCol`|Bottom-right cell column index.|&#x2705;|||Yes
+`p_toColOff`|Column offset within the bottom-right cell.|&#x2705;|||No
+`p_toRow`|Bottom-right cell row index.|&#x2705;|||Yes
+`p_toRowOff`|Row offset within the bottom-right cell.|&#x2705;|||No
+`p_imageProps`|Move/resize behaviour, one of ExcelGen constants `MOVE_RESIZE`, `MOVE_NO_RESIZE` or `NO_MOVE_NO_RESIZE`.|&#x2705;|||No
 
 ---
 ### addDataValidationRule procedure
@@ -1094,8 +1191,9 @@ procedure setTableRowProperties (
   p_ctxId    in ctxHandle
 , p_sheetId  in sheetHandle
 , p_tableId  in pls_integer
-, p_rowId    in pls_integer
-, p_style    in cellStyleHandle
+, p_rowId    in pls_integer default null
+, p_style    in cellStyleHandle default null
+, p_height   in number default null
 );
 ```
 
@@ -1104,8 +1202,9 @@ Parameter|Description|Mandatory
 `p_ctxId`|Context handle.|Yes
 `p_sheetId`|Sheet handle.|Yes
 `p_tableId`|Table handle.|Yes
-`p_rowId`|Local row index, relative to the beginning of the table.|Yes
-`p_style`|Cell style handle created via [makeCellStyle](#makecellstyle-function) or [makeCellStyleCss](#makecellstylecss-function) function.|Yes
+`p_rowId`|Local row index, relative to the beginning of the table (header excluded).  <br/>If NULL, the settings will apply to all rows of the table.|No
+`p_style`|Cell style handle created via [makeCellStyle](#makecellstyle-function) or [makeCellStyleCss](#makecellstylecss-function) function.|No
+`p_height`|Row height in points.|No
 
 ---
 ### addTableColumn procedure
@@ -1964,7 +2063,7 @@ begin
                , p_font      => ExcelGen.makeFont('Calibri',11,true)
                , p_fill      => ExcelGen.makePatternFill('solid','YellowGreen')
                , p_border    => ExcelGen.makeBorder('thick','red')
-               , p_alignment => ExcelGen.makeAlignment(horizontal => 'center')
+               , p_alignment => ExcelGen.makeAlignment(p_horizontal => 'center')
                );
   ...
 ```
@@ -2625,6 +2724,41 @@ Formulas must be entered in English locale, specifically:
 
 The list of supported functions is available [here](https://github.com/mbleron/ExcelCommons/blob/main/resources/excel-functions.csv).
 
+## Image Support
+
+### Generalities
+ExcelGen supports the "Place-over-Cell" feature, as well as "Place-in-Cell" available in latest Excel versions (Microsoft 365).  
+Images must be provided in PNG, JPEG, GIF or SVG(*) formats through BLOB values.  
+Values may come from BLOB columns in a table underlying SQL query, or from other sources when used to set individual cells via [putImageCell](#putimagecell-procedure) procedure.  
+
+(*) SVG support was added in Office 365, with the following behaviour depending on how it is used:  
+* Place-in-Cell: Excel converts and stores the image in PNG format only, so its vector nature is lost.
+* Place-over-Cell: Excel stores both the original SVG and a PNG version, so that another non SVG-enabled Excel can still display the raster version.  
+
+ExcelGen only supports SVG using the "Place-over-Cell" behaviour, with a dummy fallback PNG image created automatically.  
+
+### Image positioning and measurement units
+
+The "Place-over-Cell" feature is supported through [addImage](#addimage-procedure) procedure. It allows precise positioning of the image within a given sheet, either at an absolute position or anchored to specific cells.  
+Cell anchors must be given as 1-based indices, while offsets may be specified in various usual length units.  
+
+![image-positioning](./resources/image-positioning.png)
+
+Allowed units for absolute positioning, image extents and offsets, with informative conversions assuming a default 96 DPI display:
+
+&nbsp;|EMU|cm|mm|in|pc|pt|px
+:--|--:|--:|--:|--:|--:|--:|--:
+**EMU**|1|1/360000|1/3600000|1/914400|1/152400|1/12700|1/9525
+**cm (centimetre)**|360000|1|10|1/2.54|6/2.54|72/2.54|96/2.54
+**mm (millimetre)**|3600000|0.1|1|1/25.4|6/2.54|72/25.4|96/25.4
+**in (inch)**|914400|2.54|25.4|1|6|72|96
+**pc (pica)**|152400|2.54/6|25.4/6|1/6|1|12|16
+**pt (point)**|12700|2.54/72|25.4/72|1/72|1/12|1|4/3
+**px (pixel)**|9525|2.54/96|25.4/96|1/96|1/16|3/4|1
+
+In this matrix, 1 unit in the first column is equal to 1 unit in the first row times the value at the intersection, e.g. 1in = 96px, or 1pt = 12700 EMU.
+
+Except for EMU, measurement must be specified using the numeric value immediately followed by the unit identifier, e.g. `100px`, `12.3cm`.
 
 ## Examples
 
@@ -2644,6 +2778,7 @@ The list of supported functions is available [here](https://github.com/mbleron/E
 * [Hyperlinks](#hyperlinks)
 * [Data validation](#data-validation)
 * [Conditional formatting](#conditional-formatting-1)
+* [Images](#images)
 
 #### Single query to sheet mapping, with header formatting
 [employees.sql](./test_cases/employees.sql) &#8594; [employees.xlsx](./samples/employees.xlsx)
@@ -3002,6 +3137,82 @@ Creates a workbook with various data validation rules.
 #### Conditional formatting
 Creates a workbook with various conditional formatting rules.  
 [cond-formatting.sql](./test_cases/cond-formatting.sql) &#8594; [cond-formatting.xlsx](./samples/cond-formatting.xlsx)
+
+### Images
+In-cell images from SQL query: [test-image-1.xlsx](./samples/test-image-1.xlsx)  
+[Data source: [create_table_country_flags.sql](./test_cases/create_table_country_flags.sql)]
+```
+declare
+  ctx     ExcelGen.ctxHandle := ExcelGen.createContext(ExcelGen.FILE_XLSX);
+  sheet1  ExcelGen.sheetHandle := ExcelGen.addSheet(ctx, 'selector');
+  sheet2  ExcelGen.sheetHandle := ExcelGen.addSheet(ctx, 'data');
+  table1  ExcelGen.tableHandle := ExcelGen.addTable(ctx, sheet2, 'select iso2_code, un_code, label_en, image_png from country_flags order by iso2_code');
+begin
+  -- data table holding flags info
+  ExcelGen.setTableHeader(ctx, sheet2, table1);
+  ExcelGen.setTableRowProperties(ctx, sheet2, table1, p_height => 30);
+  ExcelGen.setColumnProperties(ctx, sheet2, 3, p_width => 40); 
+  ExcelGen.setTableProperties(ctx, sheet2, table1, p_tableName => 'FlagList');
+  
+  -- selector sheet
+  ExcelGen.putStringCell(ctx, sheet1, 2, 2, 'Select a country', p_style => ExcelGen.makeCellStyleCss(ctx,'font-size:16pt;font-weight:bold;text-align:center'));
+  
+  -- list of country codes validated against the data sheet
+  ExcelGen.putStringCell(ctx, sheet1, 2, 3, 'FR', p_style => ExcelGen.makeCellStyleCss(ctx,'font-size:24pt;font-weight:bold;text-align:center'));
+  ExcelGen.addDataValidationRule(ctx, sheet1, 'list', ExcelTypes.ST_Sqref('C2'), p_value1 => 'INDEX(INDIRECT("FlagList"),0,1)');
+  
+  ExcelGen.mergeCells(ctx, sheet1, 'B3:C15');
+  ExcelGen.mergeCells(ctx, sheet1, 'B16:C16');
+  
+  -- a couple of VLOOKUP calls to retrieve selected country flag and name from the data sheet
+  ExcelGen.putFormulaCell(ctx, sheet1, 3, 2, 'VLOOKUP($C$2,INDIRECT("FlagList"),4,FALSE)');
+  ExcelGen.putFormulaCell(ctx, sheet1, 16, 2, 'VLOOKUP($C$2,INDIRECT("FlagList"),3,FALSE)', p_style => ExcelGen.makeCellStyleCss(ctx,'font-size:16pt;font-weight:bold;text-align:center'));
+  
+  -- more formatting
+  ExcelGen.setColumnProperties(ctx, sheet1, 1, p_width => ExcelGen.colPxToCharWidth(10));
+  ExcelGen.setRowProperties(ctx, sheet1, 1, p_height => ExcelGen.rowPxToPt(10));
+  ExcelGen.setColumnProperties(ctx, sheet1, 2, p_width => 56);
+  ExcelGen.setRowProperties(ctx, sheet1, 2, p_height => 40);
+  ExcelGen.setRowProperties(ctx, sheet1, 16, p_height => 30);
+  ExcelGen.setRangeStyle(ctx, sheet1, 'B2:C16', p_style => ExcelGen.makeCellStyleCss(ctx,'border:medium solid black'));
+  ExcelGen.setSheetProperties(ctx, sheet1, p_showGridLines => false);
+  
+  ExcelGen.setDefaultStyle(ctx, ExcelGen.makeCellStyleCss(ctx, 'vertical-align:middle'));
+  
+  ExcelGen.createFile(ctx, 'TEST_DIR', 'test-image-1.xlsx');
+end;
+/
+```
+
+Individual in and over-cell images: [test-image-2.xlsx](./samples/test-image-2.xlsx)  
+```
+declare
+  ctx     ExcelGen.ctxHandle := ExcelGen.createContext(ExcelGen.FILE_XLSX);
+  sheet1  ExcelGen.sheetHandle := ExcelGen.addSheet(ctx, 'sheet1');
+  -- this is a 400x200 black rectangle in PNG format:
+  img     blob := utl_encode.base64_decode(utl_raw.cast_to_raw('iVBORw0KGgoAAAANSUhEUgAAAZAAAADIAQAAAADubopPAAAAIUlEQVR4nO3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAIAXAyfYAAEIK90SAAAAAElFTkSuQmCC'));
+begin
+  
+  -- in-cell image at C2
+  ExcelGen.putImageCell(ctx, sheet1, 2, 3, img);
+  
+  -- over-cell image anchored at B4 with 10px offsets
+  ExcelGen.addImage (
+    p_ctxId       => ctx
+  , p_sheetId     => sheet1
+  , p_image       => img
+  , p_anchorType  => ExcelGen.ONECELL_ANCHOR
+  , p_fromCol     => 2
+  , p_fromColOff  => '10px'
+  , p_fromRow     => 4
+  , p_fromRowOff  => '10px'
+  );  
+  
+  ExcelGen.createFile(ctx, 'TEST_DIR', 'test-image-2.xlsx');
+end;
+/
+```
+
 
 ## Copyright and license
 

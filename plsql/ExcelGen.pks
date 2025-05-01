@@ -61,6 +61,7 @@ create or replace package ExcelGen is
     Marc Bleron       2024-07-21     Added hyperlink, excluded columns, table naming
     Marc Bleron       2024-08-14     Added makeCellRange, data validation
     Marc Bleron       2024-09-06     Conditional formatting
+    Marc Bleron       2025-02-08     Image support
 ====================================================================================== */
 
   -- file types
@@ -84,6 +85,16 @@ create or replace package ExcelGen is
   TOP_RIGHT       constant pls_integer := 2;
   BOTTOM_RIGHT    constant pls_integer := 3;
   BOTTOM_LEFT     constant pls_integer := 4;
+  
+  -- drawing anchor type
+  TWOCELL_ANCHOR   constant pls_integer := 0;
+  ONECELL_ANCHOR   constant pls_integer := 1;
+  ABSOLUTE_ANCHOR  constant pls_integer := 2;
+  
+  -- drawing behaviour when anchor cells are moved or resized
+  MOVE_RESIZE          constant pls_integer := 0;  -- twoCell
+  MOVE_NO_RESIZE       constant pls_integer := 1;  -- oneCell
+  NO_MOVE_NO_RESIZE    constant pls_integer := 2;  -- absolute
   
   subtype CT_BorderPr is ExcelTypes.CT_BorderPr;
   subtype CT_Border is ExcelTypes.CT_Border;
@@ -522,6 +533,36 @@ create or replace package ExcelGen is
   , p_anchorPosition  in pls_integer default null
   );
 
+  procedure putImageCell (
+    p_ctxId           in ctxHandle
+  , p_sheetId         in sheetHandle
+  , p_rowIdx          in pls_integer
+  , p_colIdx          in pls_integer
+  , p_image           in blob
+  , p_anchorTableId   in tableHandle default null
+  , p_anchorPosition  in pls_integer default null
+  );
+
+  procedure addImage (
+    p_ctxId       in ctxHandle
+  , p_sheetId     in sheetHandle
+  , p_image       in blob
+  , p_anchorType  in pls_integer
+  , p_posX        in varchar2 default null
+  , p_posY        in varchar2 default null
+  , p_extX        in varchar2 default null
+  , p_extY        in varchar2 default null
+  , p_fromCol     in pls_integer default null
+  , p_fromColOff  in varchar2 default null
+  , p_fromRow     in pls_integer default null
+  , p_fromRowOff  in varchar2 default null
+  , p_toCol       in pls_integer default null
+  , p_toColOff    in varchar2 default null
+  , p_toRow       in pls_integer default null
+  , p_toRowOff    in varchar2 default null
+  , p_imageProps  in pls_integer default null
+  );
+
   procedure addDataValidationRule (
     p_ctxId             in ctxHandle
   , p_sheetId           in sheetHandle
@@ -745,8 +786,9 @@ create or replace package ExcelGen is
     p_ctxId    in ctxHandle
   , p_sheetId  in sheetHandle
   , p_tableId  in pls_integer
-  , p_rowId    in pls_integer
-  , p_style    in cellStyleHandle
+  , p_rowId    in pls_integer default null
+  , p_style    in cellStyleHandle default null
+  , p_height   in number default null
   );
 
   procedure addTableCondFmtRule (
