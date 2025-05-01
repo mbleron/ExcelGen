@@ -3182,6 +3182,7 @@ begin
 end;
 /
 ```
+
 Individual in and over-cell images: [test-image-2.xlsx](./samples/test-image-2.xlsx)  
 ```
 declare
