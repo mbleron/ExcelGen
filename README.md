@@ -19,6 +19,7 @@ It supports encryption, cell merging, various formatting options through a built
 
 ## What's New in...
 
+> Version 4.4 : image support  
 > Version 4.0 : defined names and formulas support  
 > Version 3.0 : cell API, CSS styling support, multitable sheet, merged cells  
 > Version 2.0 : support for XLSB format output  
