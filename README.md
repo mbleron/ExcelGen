@@ -2062,7 +2062,7 @@ begin
                , p_font      => ExcelGen.makeFont('Calibri',11,true)
                , p_fill      => ExcelGen.makePatternFill('solid','YellowGreen')
                , p_border    => ExcelGen.makeBorder('thick','red')
-               , p_alignment => ExcelGen.makeAlignment(horizontal => 'center')
+               , p_alignment => ExcelGen.makeAlignment(p_horizontal => 'center')
                );
   ...
 ```
