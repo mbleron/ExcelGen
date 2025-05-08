@@ -1,5 +1,11 @@
 # Change Log
 
+## [4.5.0] - 2025-05-08
+
+### Added
+
+* Sheet background image
+
 ## [4.4.0] - 2025-05-01
 
 ### Added

@@ -62,6 +62,7 @@ create or replace package ExcelGen is
     Marc Bleron       2024-08-14     Added makeCellRange, data validation
     Marc Bleron       2024-09-06     Conditional formatting
     Marc Bleron       2025-02-08     Image support
+    Marc Bleron       2025-05-08     Sheet background
 ====================================================================================== */
 
   -- file types
@@ -680,6 +681,7 @@ create or replace package ExcelGen is
   , p_showGridLines        in boolean default null
   , p_showRowColHeaders    in boolean default null
   , p_defaultRowHeight     in number default null
+  , p_background           in blob default null
   );
 
   procedure mergeCells (

@@ -1068,6 +1068,7 @@ procedure setSheetProperties (
 , p_showGridLines        in boolean default null
 , p_showRowColHeaders    in boolean default null
 , p_defaultRowHeight     in number default null
+, p_background           in blob default null
 );
 ```
 
@@ -1079,6 +1080,7 @@ Parameter|Description|Mandatory
 `p_showGridLines`|Hide or show grid lines on the sheet. Default is `true` (show).|No
 `p_showRowColHeaders`|Hide or show row and column headers on the sheet. Default is `true` (show).|No
 `p_defaultRowHeight`|Default row height on this sheet, in points.|No
+`p_background`|Sheet background image, as a BLOB. Supported formats are PNG, JPEG and GIF.|No
 
 ---
 ### setTableProperties procedure
@@ -2759,6 +2761,10 @@ Allowed units for absolute positioning, image extents and offsets, with informat
 In this matrix, 1 unit in the first column is equal to 1 unit in the first row times the value at the intersection, e.g. 1in = 96px, or 1pt = 12700 EMU.
 
 Except for EMU, measurement must be specified using the numeric value immediately followed by the unit identifier, e.g. `100px`, `12.3cm`.
+
+### Sheet background image
+
+ExcelGen supports sheet background images via the [setSheetProperties](#setsheetproperties-procedure) procedure.
 
 ## Examples
 
