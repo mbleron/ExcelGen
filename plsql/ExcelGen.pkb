@@ -67,9 +67,10 @@ create or replace package body ExcelGen is
     Marc Bleron       2025-01-31     Fixed corrupted sheet references in formulas after a pageable sheet
                                      More fixes related to pageable sheets and virtual columns
     Marc Bleron       2025-02-08     Image support
+    Marc Bleron       2025-05-08     Sheet background
 ====================================================================================== */
 
-  VERSION_NUMBER     constant varchar2(16) := '4.4.0';
+  VERSION_NUMBER     constant varchar2(16) := '4.5.0';
 
   -- OPC part MIME types
   --MT_COMMENTS        constant varchar2(256) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml';
@@ -549,6 +550,7 @@ create or replace package body ExcelGen is
   , dvRules              ExcelTypes.CT_DataValidations
   , cfRules              ExcelTypes.CT_CfRules
   , drawing              CT_Drawing
+  , background           blob
   );
   
   type sheet_definition_map_t is table of sheet_definition_t index by pls_integer;
@@ -4844,6 +4846,8 @@ create or replace package body ExcelGen is
     dvRules         ExcelTypes.CT_DataValidations := sd.dvRules;
     cfRules         ExcelTypes.CT_CfRules := sd.cfRules;
     
+    bgImage         image_t;
+    
   begin
     
     sheet.name := sd.sheetName;
@@ -5358,6 +5362,13 @@ create or replace package body ExcelGen is
       rId := addRelationship(part, RS_DRAWING, createDrawingPart(ctx, sd.drawing));
       stream_write(stream, '<drawing r:id="'||rId||'"/>');
     end if;
+    
+    -- background image
+    if sd.background is not null then
+      bgImage := createImagePart(ctx, sd.background);
+      rId := addRelationship(part, RS_IMAGE, bgImage.partName);
+      stream_write(stream, '<picture r:id="'||rId||'"/>');
+    end if;
       
     -- table parts
     if sheet.tableParts.count != 0 then
@@ -5433,6 +5444,8 @@ create or replace package body ExcelGen is
 
     dvRules         ExcelTypes.CT_DataValidations := sd.dvRules;
     cfRules         ExcelTypes.CT_CfRules := sd.cfRules;
+    
+    bgImage         image_t;
     
   begin
     
@@ -5945,6 +5958,13 @@ create or replace package body ExcelGen is
     if sd.drawing.count != 0 then
       rId := addRelationship(part, RS_DRAWING, createDrawingPart(ctx, sd.drawing));
       xutl_xlsb.put_Drawing(stream, rId);
+    end if;
+    
+    -- background image
+    if sd.background is not null then
+      bgImage := createImagePart(ctx, sd.background);
+      rId := addRelationship(part, RS_IMAGE, bgImage.partName);
+      xutl_xlsb.put_BkHim(stream, rId);
     end if;
       
     -- table parts
@@ -7573,6 +7593,7 @@ create or replace package body ExcelGen is
   , p_showGridLines        in boolean default null
   , p_showRowColHeaders    in boolean default null
   , p_defaultRowHeight     in number default null
+  , p_background           in blob default null
   )
   is
     cellRef  cell_ref_t;
@@ -7590,6 +7611,9 @@ create or replace package body ExcelGen is
     end if;
     if p_showRowColHeaders is not null then
       currentCtx.sheetDefinitionMap(p_sheetId).showRowColHeaders := p_showRowColHeaders;
+    end if;
+    if p_background is not null then
+      currentCtx.sheetDefinitionMap(p_sheetId).background := p_background;
     end if;
     currentCtx.sheetDefinitionMap(p_sheetId).hasProps := ( p_activePaneAnchorRef is not null 
                                                            or p_showGridLines is not null 
